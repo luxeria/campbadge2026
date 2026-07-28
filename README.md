@@ -13,13 +13,17 @@ with the following components:
 ## Getting Started
 
 The examples in this repository have been written with the
-[M5Stack Atom Lite](https://shop.m5stack.com/products/atom-lite-esp32-development-kit)
-or [M5Stack Atom S3 Lite](https://shop.m5stack.com/products/atoms3-lite-esp32s3-dev-kit)
+[M5Stack Atom S3 Lite](https://shop.m5stack.com/products/atoms3-lite-esp32s3-dev-kit)
 microcontroller in mind. Check out the following examples in the `Software`
 folder to get familiarized with the badge:
 
  - [Getting Started with MicroPython](Software/MicroPython/)
  - [Getting Started with Arduino/PlatformIO](Software/CPP/)
+
+### Pinout for Atom S3 Lite
+
+![Pinout Atom Lite S3: GPIO2=BZR, GPIO5=TFT_SCL, GPIO6=TFT_SDA, GPIO7=TFT_CS, GPIO8=TFT_DC, GPIO39=I2C_SCL, GPIO38=I2C_SDA](Hardware/AtomLiteS3Pinout.svg)
+
 
 ## Render
 
