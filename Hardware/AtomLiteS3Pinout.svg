@@ -475,10 +475,10 @@
            y="172.48253"
            id="text64"><tspan
              sodipodi:role="line"
-             id="tspan64"
              style="font-size:2.11667px;stroke-width:0.264583"
              x="141.60133"
-             y="172.48253">I2C</tspan></text><text
+             y="172.48253"
+             id="tspan72">SPI</tspan></text><text
            xml:space="preserve"
            style="font-size:2.11667px;line-height:1.25;font-family:'Barlow Semi Condensed Medium';-inkscape-font-specification:'Barlow Semi Condensed Medium, ';stroke-width:0.264583"
            x="141.66484"
@@ -488,7 +488,7 @@
              id="tspan65"
              style="font-size:2.11667px;stroke-width:0.264583"
              x="141.66484"
-             y="177.74397">SPI</tspan></text><text
+             y="177.74397">I2C</tspan></text><text
            xml:space="preserve"
            style="font-size:2.11667px;line-height:1.25;font-family:'Barlow Semi Condensed Medium';-inkscape-font-specification:'Barlow Semi Condensed Medium, ';stroke-width:0.264583"
            x="141.60768"
