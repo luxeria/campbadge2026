@@ -24,8 +24,8 @@ folder to get familiarized with the badge:
 
 - **The `TFT_CS` and `TFT_DC` pins on the 5 pin header are mislabeled:** The labels printed on the PCB were mistakenly swapped (CS is DC and DC is CS). See the [schematic](Hardware/SCH_Schematic_2026-07-31.pdf) or the pinout below for the correct ordering. The `TFT_CS` and `TFT_DC` labels on the 7 pin header are correct.
 - **To turn off the LEDs via I/O expander, configure the corresponding GPIO pins as input (floating)**: The I/O expander can only pull up to `VCC`, where as the LEDs are driven by `5V`. If your `VCC` is lower than 5V (such as for example with the Atom S3 Lite), they will not turn off completely when pulled high. Instead, configure the GPIO pin as input to _turn them off_, and configure the pin as output set to low to _turn them on_. The POWER LED cannot be turned off (but you may desolder it).
-- **The maximum battery input voltage is 5.5V:** The `TPS61023` voltage booster supports 0.5 - 5.5V. If you use non-rechargeable AA or AAA batteries to power the board, never use more than three batteries (for a total of 4.5V).
-- **Some boards were assembled with wrong LEDs**: Some boards have two blue LEDs on the astronaut's cat ears, rather than one blue and one red. This was an error by the manufacturer.
+- **The maximum battery input voltage is 5.5V:** The TPS61023 voltage booster supports 0.5 - 5.5V. If you use non-rechargeable AA or AAA batteries to power the board, never use more than three batteries (for a total of 4.5V).
+- **Some boards were assembled with wrong LEDs**: Some badges have two blue LEDs (instead of one blue and one red) on the astronaut's cat ears, meaning `LED_RED` will emit blue light.
 
 ### Pinout for Atom S3 Lite
 
