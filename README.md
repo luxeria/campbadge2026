@@ -20,7 +20,7 @@ folder to get familiarized with the badge:
  - [Getting Started with MicroPython](Software/MicroPython/)
  - [Getting Started with Arduino/PlatformIO](Software/CPP/)
 
-### ⚠️ Errata and other important information
+### Errata and other important information
 
 - **The `TFT_CS` and `TFT_DC` pins on the 5 pin header are mislabeled:** The labels printed on the PCB were mistakenly swapped (CS is DC and DC is CS). See the [schematic](Hardware/SCH_Schematic_2026-07-31.pdf) or the pinout below for the correct ordering. The `TFT_CS` and `TFT_DC` labels on the 7 pin header are correct.
 - **To turn off the LEDs via I/O expander, configure the corresponding GPIO pins as input (floating)**: The I/O expander can only pull up to `VCC`, where as the LEDs are driven by `5V`. If your `VCC` is lower than 5V (such as for example with the Atom S3 Lite), they will not turn off completely when pulled high. Instead, configure the GPIO pin as input to _turn them off_, and configure the pin as output set to low to _turn them on_. The POWER LED cannot be turned off (but you may desolder it).
