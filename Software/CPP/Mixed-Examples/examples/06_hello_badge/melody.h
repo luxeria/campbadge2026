@@ -1,38 +1,64 @@
 static const BadgeNote MELODY[] = {
-    // — "Never gonna give you up" —
-    //  A4   B4   D5   B4   F#5  F#5  E5(.)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_FS5, 250}, {NOTE_FS5, 250}, {NOTE_E5, 750},
-    {NOTE_REST, 125},
-
-    // — "Never gonna let you down ~" —
-    //  A4   B4   D5   B4   E5   E5   D5   C#5  B5(𝅗𝅥)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_E5, 250}, {NOTE_E5, 250}, {NOTE_D5, 250}, {NOTE_CS5, 250}, {NOTE_B4, 1000},
-    {NOTE_REST, 125},
-
-    // — "Never gonna run around and desert you" —
-    //  A4   B4   D5   B4   D5   E5   C#5  A4   A4   E5   D5(𝅗𝅥)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_D5, 250}, {NOTE_E5, 250}, {NOTE_CS5, 250},
-    {NOTE_A4, 250}, {NOTE_A4, 250}, {NOTE_E5, 250}, {NOTE_D5, 1000},
-    {NOTE_REST, 125},
-
-    // — "Never gonna make you cry" —
-    //  (gleiches Pattern wie Zeile 1)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_FS5, 250}, {NOTE_FS5, 250}, {NOTE_E5, 750},
-    {NOTE_REST, 125},
-
-    // — "Never gonna say goodbye ~ ~" —
-    //  A4   B4   D5   B4   A5   C#5  D5   C#5  B4(𝅝.)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_A5, 250}, {NOTE_CS5, 250}, {NOTE_D5, 250}, {NOTE_CS5, 250}, {NOTE_B4, 1500},
-    {NOTE_REST, 125},
-
-    // — "Never gonna tell a lie and hurt you" —
-    //  (gleiches Pattern wie Zeile 3)
-    {NOTE_A4, 250}, {NOTE_B4, 250}, {NOTE_D5, 250}, {NOTE_B4, 250},
-    {NOTE_D5, 250}, {NOTE_E5, 250}, {NOTE_CS5, 250},
-    {NOTE_A4, 250}, {NOTE_A4, 250}, {NOTE_E5, 250}, {NOTE_D5, 1000},
+  {NOTE_A4     ,  117}, {NOTE_B4     ,  117}, {NOTE_D5     ,  118}, {NOTE_B4     ,  117}, {NOTE_FS5    ,  234}, {NOTE_REST   ,  117}, {NOTE_FS5    ,  352}, {NOTE_CS6    ,   29},
+  {NOTE_A5     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   30},
+  {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   30}, {NOTE_A5     ,   29},
+  {NOTE_E5     ,   29}, {NOTE_CS6    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   30}, {NOTE_E5     ,   29}, {NOTE_A4     ,  117},
+  {NOTE_B4     ,  117}, {NOTE_CS5    ,  118}, {NOTE_A4     ,  117}, {NOTE_E5     ,  234}, {NOTE_REST   ,  117}, {NOTE_E5     ,  352}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   30}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29},
+  {NOTE_B5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A4     ,  117}, {NOTE_B4     ,  117},
+  {NOTE_CS5    ,  118}, {NOTE_A4     ,  117}, {NOTE_D5     ,  469}, {NOTE_E5     ,  234}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   30}, {NOTE_A5     ,   29},
+  {NOTE_E5     ,   29}, {NOTE_CS5    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_B4     ,  235}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   30},
+  {NOTE_E5     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS5    ,   29}, {NOTE_REST   ,  234}, {NOTE_A4     ,  235}, {NOTE_E5     ,  469},
+  {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30},
+  {NOTE_REST   ,  234}, {NOTE_A4     ,  117}, {NOTE_B4     ,  117}, {NOTE_D5     ,  118}, {NOTE_B4     ,  117}, {NOTE_FS5    ,  234}, {NOTE_REST   ,  117}, {NOTE_FS5    ,  352},
+  {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29},
+  {NOTE_E5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   30},
+  {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   30}, {NOTE_E5     ,   29},
+  {NOTE_A4     ,  117}, {NOTE_B4     ,  117}, {NOTE_CS5    ,  118}, {NOTE_A4     ,  117}, {NOTE_A5     ,  469}, {NOTE_CS5    ,  234}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   30}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_CS5    ,  235}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   29}, {NOTE_B4     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B4     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A4     ,  117},
+  {NOTE_B4     ,  117}, {NOTE_CS5    ,  118}, {NOTE_A4     ,  117}, {NOTE_D5     ,  469}, {NOTE_E5     ,  234}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_A5     ,   30},
+  {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_A5     ,   30}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_B4     ,  235}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   29},
+  {NOTE_A4     ,   30}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   29}, {NOTE_E5     ,   30}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   29}, {NOTE_E5     ,   30},
+  {NOTE_CS5    ,   29}, {NOTE_A4     ,   29}, {NOTE_REST   ,  117}, {NOTE_A4     ,  235}, {NOTE_E5     ,  469}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   30},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_REST   ,  703}, {NOTE_B4     ,  234}, {NOTE_D5     ,  117},
+  {NOTE_REST   ,  118}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_A5     ,   30},
+  {NOTE_FS5    ,   29}, {NOTE_B4     ,  234}, {NOTE_B5     ,   30}, {NOTE_G5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B5     ,   30}, {NOTE_G5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_E5     ,  234}, {NOTE_REST   ,  469}, {NOTE_A4     ,  234}, {NOTE_CS5    ,  235}, {NOTE_A5     ,   29}, {NOTE_E5     ,   29},
+  {NOTE_CS5    ,   29}, {NOTE_A5     ,   30}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A5     ,   30}, {NOTE_E5     ,   29}, {NOTE_CS5    ,  117}, {NOTE_B4     ,  117},
+  {NOTE_A4     ,   30}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   30}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_CS5    ,   30},
+  {NOTE_A4     ,   29}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   30}, {NOTE_CS5    ,   29}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   30}, {NOTE_CS5    ,   29},
+  {NOTE_A4     ,  234}, {NOTE_REST   ,  469}, {NOTE_B4     ,  117}, {NOTE_REST   ,  118}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B4     ,   29}, {NOTE_FS5    ,   30},
+  {NOTE_D5     ,   29}, {NOTE_B4     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_CS5    ,  234}, {NOTE_D5     ,  235}, {NOTE_G5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   30}, {NOTE_B4     ,   29}, {NOTE_G5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B4     ,   29}, {NOTE_REST   ,  234}, {NOTE_A4     ,  235},
+  {NOTE_A5     ,   29}, {NOTE_CS6    ,   29}, {NOTE_E6     ,   30}, {NOTE_A5     ,   29}, {NOTE_CS6    ,   29}, {NOTE_E6     ,   30}, {NOTE_A5     ,   29}, {NOTE_CS6    ,   29},
+  {NOTE_E6     ,   29}, {NOTE_A5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_E6     ,   29}, {NOTE_A5     ,   30}, {NOTE_CS6    ,   29}, {NOTE_E6     ,   29}, {NOTE_A5     ,   30},
+  {NOTE_A5     ,  234}, {NOTE_E5     ,  469}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_CS6    ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_CS6    ,   30}, {NOTE_A5     ,   29}, {NOTE_E5     ,  234}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_REST   ,  234}, {NOTE_D5     ,  117}, {NOTE_REST   ,  118}, {NOTE_D5     ,  234}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   29}, {NOTE_B4     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B4     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_D5     ,  235},
+  {NOTE_G5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B4     ,   29}, {NOTE_G5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_B4     ,   29},
+  {NOTE_D5     ,  234}, {NOTE_E5     ,  235}, {NOTE_REST   ,  234}, {NOTE_CS5    ,  235}, {NOTE_B4     ,  234}, {NOTE_CS5    ,  117}, {NOTE_B4     ,  117}, {NOTE_A4     ,   30},
+  {NOTE_CS5    ,   29}, {NOTE_E5     ,   29}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   30}, {NOTE_E5     ,   29}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   30}, {NOTE_E5     ,   29},
+  {NOTE_A4     ,   29}, {NOTE_CS5    ,   30}, {NOTE_E5     ,   29}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   30}, {NOTE_A4     ,   29}, {NOTE_A4     ,  469},
+  {NOTE_REST   ,  234}, {NOTE_B4     ,  117}, {NOTE_REST   ,  118}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_B4     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29},
+  {NOTE_B4     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_CS5    ,  234}, {NOTE_D5     ,  235}, {NOTE_B4     ,   29}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   30},
+  {NOTE_B4     ,   29}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_B4     ,   30}, {NOTE_D5     ,   29}, {NOTE_A4     ,  352}, {NOTE_REST   ,  117}, {NOTE_E5     ,  117},
+  {NOTE_REST   ,  117}, {NOTE_E5     ,  117}, {NOTE_REST   ,  118}, {NOTE_E5     ,  234}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_E5     ,  469}, {NOTE_REST   ,  469}, {NOTE_D5     ,  469}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29},
+  {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   30},
+  {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_E5     ,  234},
+  {NOTE_A5     ,   29}, {NOTE_FS5    ,   30}, {NOTE_D5     ,   29}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_REST   ,   15}, {NOTE_E5     ,  337}, {NOTE_REST   ,  102}, {NOTE_E5     ,  118}, {NOTE_REST   ,  132}, {NOTE_E5     ,  234}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   30}, {NOTE_A5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_E5     ,  469}, {NOTE_A4     ,   29},
+  {NOTE_CS5    ,   30}, {NOTE_E5     ,   29}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   29}, {NOTE_E5     ,   30}, {NOTE_A4     ,   29}, {NOTE_CS5    ,   29}, {NOTE_A4     ,  235},
+  {NOTE_REST   ,  703}, {NOTE_A4     ,  234}, {NOTE_B4     ,  235}, {NOTE_CS5    ,  234}, {NOTE_D5     ,  234}, {NOTE_B4     ,   30}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29},
+  {NOTE_B4     ,   30}, {NOTE_D5     ,   29}, {NOTE_FS5    ,   29}, {NOTE_B4     ,   29}, {NOTE_D5     ,   30}, {NOTE_REST   ,  234}, {NOTE_E5     ,  235}, {NOTE_A5     ,   29},
+  {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_D5     ,   29}, {NOTE_A5     ,   30}, {NOTE_FS5    ,   29}, {NOTE_E5     ,  703},
 };
