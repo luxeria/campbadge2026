@@ -65,6 +65,17 @@ static const uint16_t NOTE_AS5 = 932;
 static const uint16_t NOTE_B5 = 988;
 
 static const uint16_t NOTE_C6 = 1047;
+static const uint16_t NOTE_CS6 = 1109;
+static const uint16_t NOTE_D6 = 1175;
+static const uint16_t NOTE_DS6 = 1245;
+static const uint16_t NOTE_E6 = 1319;
+static const uint16_t NOTE_F6 = 1397;
+static const uint16_t NOTE_FS6 = 1480;
+static const uint16_t NOTE_G6 = 1568;
+static const uint16_t NOTE_GS6 = 1661;
+static const uint16_t NOTE_A6 = 1760;
+static const uint16_t NOTE_AS6 = 1865;
+static const uint16_t NOTE_B6 = 1976;
 
 class BadgeBuzzer {
 public:
