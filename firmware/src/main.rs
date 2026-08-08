@@ -1,10 +1,9 @@
 //! Firmware entry point for the LuxCamp badge (M5Stack Atom S3 Lite).
 //!
-//! Brings up the I2C expander (display reset + buttons + LEDs), initialises the
-//! round GC9A01A panel over SPI, and runs an interactive demo driven by the
-//! `raylib_camp` engine. Debug logs are emitted over native-USB serial in a
-//! strictly non-blocking way, so the game runs the same whether or not a serial
-//! monitor is attached.
+//! Runs the two-player SLSO8-themed dice game from the `games` crate in a
+//! rotating hot-seat mode: the badge is passed between players each turn. Dice
+//! tumble down and settle, the active die is highlighted, and the player picks
+//! scoring dice, scores them, rolls the leftovers, or banks the turn.
 
 #![no_std]
 #![no_main]
@@ -20,11 +19,11 @@ use esp_hal::time::Rate;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagTx};
 
 use raylib_camp::canvas::{Canvas, display};
-use raylib_camp::color::{Color, palette};
+use raylib_camp::color::Color;
 use raylib_camp::input::{Button, Input};
 use raylib_camp::rand::Prng;
 
-use games::sevens::{Card, Game, PlayOutcome, Suit, SUITS, PLAYER_COUNT, MAX_HAND};
+use games::dice::{Game, DICE_COUNT, slso8};
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -43,36 +42,15 @@ const PORT_1_OUTPUT_MASK: u8 = 0xe0;
 /// GC9A01A display reset lives on expander pin P1.0.
 const DISPLAY_RESET_BIT: u8 = 0x01;
 
-/// The round panel size in pixels.
-const PANEL_SIZE: usize = 240;
-
 /// Framebuffer backing storage (RGB565), big enough for the whole panel.
 static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
 
-/// A tiny `core::fmt::Write` target writing into a fixed stack buffer.
-struct ByteWriter<'a> {
-    buffer: &'a mut [u8],
-    length: usize,
-}
-
-impl core::fmt::Write for ByteWriter<'_> {
-    fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        let bytes = text.as_bytes();
-        let remaining = &mut self.buffer[self.length..];
-        let count = bytes.len().min(remaining.len());
-        remaining[..count].copy_from_slice(&bytes[..count]);
-        self.length += count;
-        Ok(())
-    }
-}
+/// Side length of a settled die in pixels.
+const DIE: i32 = 38;
+/// Horizontal spacing between dice slots.
+const SLOT_SPACING: i32 = 46;
 
 /// Emits a log line without ever blocking the caller.
-///
-/// The native-USB serial FIFO only drains when a host reads it, so a blocking
-/// write stalls the game whenever no monitor is attached. Bytes are pushed one
-/// at a time and the write stops as soon as the FIFO is full, dropping whatever
-/// does not fit; a non-blocking flush is attempted so partial lines still leave
-/// the peripheral when a host is present.
 fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
     for byte in line.bytes() {
         if tx.write_byte_nb(byte).is_err() {
@@ -80,25 +58,6 @@ fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
         }
     }
     let _ = tx.flush_tx_nb();
-}
-
-/// Writes a formatted message to the serial output non-blockingly.
-///
-/// Formats into a fixed stack buffer so the `no_std` firmware needs no heap.
-fn log_fmt(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, message: core::fmt::Arguments<'_>) {
-    let (storage, length) = {
-        let mut storage = [0u8; 64];
-        let length = {
-            let mut writer = ByteWriter {
-                buffer: &mut storage,
-                length: 0,
-            };
-            let _ = core::fmt::write(&mut writer, message);
-            writer.length
-        };
-        (storage, length)
-    };
-    log_line(tx, core::str::from_utf8(&storage[..length]).unwrap_or(""));
 }
 
 /// Sends a single command byte to the panel.
@@ -123,7 +82,6 @@ fn send_data(
 }
 
 /// GC9A01A register tuning table, transcribed from Adafruit's initialisation.
-/// Each pair is a command byte followed by its parameter bytes.
 const INIT_SEQUENCE: &[(&[u8], &[u8])] = &[
     (&[0xef], &[]),
     (&[0xeb], &[0x14]),
@@ -170,8 +128,8 @@ const INIT_SEQUENCE: &[(&[u8], &[u8])] = &[
     (&[0x67], &[0x00, 0x3c, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98]),
     (&[0x74], &[0x10, 0x85, 0x80, 0x00, 0x00, 0x4e, 0x00]),
     (&[0x98], &[0x3e, 0x07]),
-    (&[0x35], &[]), // tearing effect line on
-    (&[0x21], &[]), // display inversion on
+    (&[0x35], &[]),
+    (&[0x21], &[]),
 ];
 
 /// Runs the full GC9A01A initialisation sequence.
@@ -187,20 +145,16 @@ fn init_display(
             send_data(spi, dc, cs, data);
         }
     }
-
     send_command(spi, dc, cs, 0x11); // sleep out
     delay.delay_millis(120);
     send_command(spi, dc, cs, 0x29); // display on
-
-    // Address the full 240x240 window from (0,0) to (239,239).
     send_command(spi, dc, cs, 0x2a);
     send_data(spi, dc, cs, &[0x00, 0x00, 0x00, 0xef]);
     send_command(spi, dc, cs, 0x2b);
     send_data(spi, dc, cs, &[0x00, 0x00, 0x00, 0xef]);
 }
 
-/// Pushes the whole framebuffer to the display, byte-swapping each RGB565
-/// value because the panel expects big-endian pixel bytes.
+/// Pushes the whole framebuffer to the display, byte-swapping to big-endian.
 fn flush_screen(
     spi: &mut Spi<'_, esp_hal::Blocking>,
     dc: &mut Output,
@@ -210,10 +164,10 @@ fn flush_screen(
     send_command(spi, dc, cs, 0x2c); // memory write
     cs.set_low();
     dc.set_high();
-    let mut row_bytes = [0u8; PANEL_SIZE * 2];
-    for row in 0..PANEL_SIZE {
-        for column in 0..PANEL_SIZE {
-            let pixel = framebuffer[row * PANEL_SIZE + column];
+    let mut row_bytes = [0u8; display::WIDTH * 2];
+    for row in 0..display::HEIGHT {
+        for column in 0..display::WIDTH {
+            let pixel = framebuffer[row * display::WIDTH + column];
             row_bytes[column * 2] = (pixel >> 8) as u8;
             row_bytes[column * 2 + 1] = (pixel & 0xff) as u8;
         }
@@ -222,20 +176,15 @@ fn flush_screen(
     cs.set_high();
 }
 
-/// Probes the I2C bus for the badge's I/O expander, which is addressed in the
-/// TCA9539 range 0x74..=0x77 depending on its address pins.
-fn probe_expander(
-    tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>,
-    i2c: &mut I2c<'_, esp_hal::Blocking>,
-) -> u8 {
+/// Probes the I2C bus for the badge's I/O expander in the TCA9539 range.
+fn probe_expander(i2c: &mut I2c<'_, esp_hal::Blocking>) -> u8 {
     let mut dummy = [0u8; 1];
     for address in 0x74..=0x77 {
         if i2c.read(address, &mut dummy).is_ok() {
-            log_fmt(tx, format_args!("expander found at 0x{address:02x}\n"));
             return address;
         }
     }
-    0x00
+    0
 }
 
 /// Reads one byte from an I2C register on the expander.
@@ -247,54 +196,6 @@ fn read_expander_register(
     let mut value = [0u8; 1];
     let _ = i2c.write_read(address, &[register], &mut value);
     value[0]
-}
-
-/// Sorts a slice of cards by suit, then by descending rank within each suit
-/// (all suits grouped together, each fanned from its highest card down).
-fn sort_cards(cards: &mut [Card]) {
-    let comes_after = |a: Card, b: Card| -> bool {
-        a.suit.index() > b.suit.index()
-            || (a.suit.index() == b.suit.index() && a.rank < b.rank)
-    };
-    for index in 1..cards.len() {
-        let mut cursor = index;
-        while cursor > 0 && comes_after(cards[cursor - 1], cards[cursor]) {
-            cards.swap(cursor - 1, cursor);
-            cursor -= 1;
-        }
-    }
-}
-
-/// Appends a card's compact rank+suit label (e.g. `"8H"`) into a stack buffer.
-fn card_label(card: Card, out: &mut [u8; 3]) -> &str {
-    let rank = card.rank_label().as_bytes();
-    let suit = card.suit.label().as_bytes();
-    let mut count = 0;
-    for &byte in rank {
-        if count < 2 {
-            out[count] = byte;
-            count += 1;
-        }
-    }
-    out[count] = suit[0];
-    count += 1;
-    core::str::from_utf8(&out[..count]).unwrap_or("?")
-}
-
-/// Draws a small card face with an optional highlight (the selected rack card).
-fn draw_card(canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, card: Card, selected: bool) {
-    let background = if selected { palette::YELLOW } else { palette::WHITE };
-    canvas.rect_filled(x, y, w, h, background);
-    canvas.rect(x, y, w, h, palette::GREY);
-    let face_color = if card.suit == Suit::Hearts || card.suit == Suit::Diamonds {
-        palette::RED
-    } else {
-        palette::BLACK
-    };
-    let mut label = [0u8; 3];
-    let text = card_label(card, &mut label);
-    let text_width = canvas.measure_text(text, 1);
-    canvas.draw_text(text, x + (w - text_width) / 2, y + 1, 1, face_color);
 }
 
 /// Draws a decimal number centred around the given horizontal point.
@@ -324,100 +225,86 @@ fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
     canvas.draw_text(text, 120 - text_width / 2, y, 1, color);
 }
 
-/// Draws the four suited piles in a row across the middle of the round panel.
-fn draw_board(canvas: &mut Canvas, game: &Game) {
-    const PILE_W: i32 = 46;
-    const PILE_H: i32 = 34;
-    let start_x = (240 - ((4 * PILE_W) + (3 * 8))) / 2;
-    for (index, suit) in SUITS.iter().enumerate() {
-        let x = start_x + index as i32 * (PILE_W + 8);
-        match game.pile_state(index) {
-            Some((low, high)) => {
-                canvas.rect_filled(x, 96, PILE_W, PILE_H, palette::WHITE);
-                canvas.rect(x, 96, PILE_W, PILE_H, palette::GREY);
-                canvas.draw_text(suit.label(), x + 2, 97, 1, palette::BLACK);
-                let mut range = [0u8; 7];
-                let range_text = range_label(low, high, &mut range);
-                let rw = canvas.measure_text(range_text, 1);
-                canvas.draw_text(range_text, x + (PILE_W - rw) / 2, 114, 1, palette::BLACK);
-            }
-            None => {
-                canvas.rect_filled(x, 96, PILE_W, PILE_H, palette::GREY);
-                canvas.draw_text(suit.label(), x + 2, 97, 1, palette::WHITE);
-            }
+/// Horizontal centre of the `i`-th die in a row of `count`.
+fn die_slot(count: usize, index: usize) -> i32 {
+    let span = (count as i32 - 1) * SLOT_SPACING;
+    120 - span / 2 + index as i32 * SLOT_SPACING
+}
+
+/// Draws a single die face with its pip layout.
+fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
+    let half = size / 2;
+    canvas.rect_filled(cx - half, cy - half, size, size, slso8::CREAM);
+    canvas.rect(cx - half, cy - half, size, size, slso8::BURNT);
+
+    let step = size / 4;
+    let pip = (size / 7).max(2);
+    let dots: &[(i32, i32)] = match value {
+        1 => &[(0, 0)],
+        2 => &[(-step, -step), (step, step)],
+        3 => &[(-step, -step), (0, 0), (step, step)],
+        4 => &[(-step, -step), (step, -step), (-step, step), (step, step)],
+        5 => &[(-step, -step), (step, -step), (0, 0), (-step, step), (step, step)],
+        _ => &[
+            (-step, -step),
+            (step, -step),
+            (-step, 0),
+            (step, 0),
+            (-step, step),
+            (step, step),
+        ],
+    };
+    for &(dx, dy) in dots {
+        canvas.rect_filled(cx + dx - pip / 2, cy + dy - pip / 2, pip, pip, slso8::NAVY);
+    }
+}
+
+/// Draws an empty die slot (used before a roll).
+fn draw_slot(canvas: &mut Canvas, cx: i32, cy: i32, size: i32) {
+    let half = size / 2;
+    canvas.rect(cx - half, cy - half, size, size, slso8::MAUVE);
+}
+
+/// Running phase of the local game loop.
+#[derive(Clone, Copy, PartialEq)]
+enum Phase {
+    /// Slots empty; waiting for the player to roll.
+    AwaitRoll,
+    /// Dice landed; the player selects, scores, rolls or banks.
+    Select,
+    /// The turn ended (banked or farkle); waiting to continue.
+    TurnOver,
+}
+
+/// Animates `final_values` tumbling and settling over a short sequence.
+fn animate_roll(
+    canvas: &mut Canvas,
+    spi: &mut Spi<'_, esp_hal::Blocking>,
+    dc: &mut Output,
+    cs: &mut Output,
+    delay: &mut Delay,
+    final_values: &[u8],
+    rng: &mut Prng,
+) {
+    const FRAMES: i32 = 9;
+    for frame in 0..FRAMES {
+        let progress = frame as f32 / (FRAMES - 1) as f32;
+        let scale = 1.7 - 0.7 * progress;
+        // Dice fall from slightly above and settle onto the row while shrinking.
+        let settle = (1.0 - progress) * 18.0;
+        canvas.clear(slso8::NAVY);
+        for (index, &value) in final_values.iter().enumerate() {
+            let shown = if frame < FRAMES - 1 {
+                1 + rng.next_range(6) as u8
+            } else {
+                value
+            };
+            let size = (DIE as f32 * scale) as i32;
+            let cy = 104 + settle as i32;
+            draw_die(canvas, die_slot(final_values.len(), index), cy, size, shown);
         }
-    }
-}
-
-/// Renders the three opponent card-back stacks on the other sides of the table.
-fn draw_opponents(canvas: &mut Canvas, game: &Game, current: usize) {
-    let right = (current + 1) % PLAYER_COUNT;
-    let top = (current + 2) % PLAYER_COUNT;
-    let left = (current + 3) % PLAYER_COUNT;
-
-    draw_opponent(canvas, 116, 6, game.hand(top).len());
-    draw_opponent(canvas, 6, 120, game.hand(left).len());
-    draw_opponent(canvas, 220, 120, game.hand(right).len());
-}
-
-fn draw_opponent(canvas: &mut Canvas, x: i32, y: i32, count: usize) {
-    canvas.rect_filled(x, y, 11, 15, palette::BLUE);
-    canvas.rect(x, y, 11, 15, palette::GREY);
-    draw_number(canvas, x + 20, y + 2, count as u32, palette::WHITE);
-}
-
-/// Draws the current player's hand rack at the bottom plus the status line.
-fn draw_hand_rack(canvas: &mut Canvas, cards: &[Card], cursor: usize, game: &Game) {
-    let count = cards.len();
-    if count > 0 {
-        let card_w = (228 / count as i32).clamp(8, 22);
-        let start_x = (240 - count as i32 * card_w) / 2;
-        const BASE_Y: i32 = 212;
-        for (index, card) in cards.iter().enumerate() {
-            // The selected card is raised so it reads as the active choice.
-            let y = if index == cursor { BASE_Y - 6 } else { BASE_Y };
-            draw_card(canvas, start_x + index as i32 * card_w, y, card_w - 1, 26, *card, index == cursor);
-        }
-    }
-
-    if game.round_over() {
-        if game.game_over() {
-            draw_centered(canvas, 150, "GAME OVER", palette::RED);
-        } else {
-            draw_centered(canvas, 150, "ROUND OVER - B8", palette::RED);
-        }
-    } else if game.current_must_draw() {
-        draw_centered(canvas, 196, "No move - press B6", palette::ORANGE);
-    }
-}
-
-/// Builds a `low-high` range label such as `"6-K"`.
-fn range_label(low: u8, high: u8, out: &mut [u8; 7]) -> &str {
-    let mut count = 0;
-    for &byte in rank_label(low).as_bytes() {
-        out[count] = byte;
-        count += 1;
-    }
-    out[count] = b'-';
-    count += 1;
-    for &byte in rank_label(high).as_bytes() {
-        out[count] = byte;
-        count += 1;
-    }
-    core::str::from_utf8(&out[..count]).unwrap_or("")
-}
-
-/// Short label for a rank value (Ace..King).
-fn rank_label(rank: u8) -> &'static str {
-    match rank {
-        1 => "A",
-        11 => "J",
-        12 => "Q",
-        13 => "K",
-        value => {
-            const DIGITS: [&str; 9] = ["2", "3", "4", "5", "6", "7", "8", "9", "10"];
-            DIGITS[(value - 2) as usize]
-        }
+        flush_screen(spi, dc, cs, canvas.as_slice());
+        delay.delay_millis(33);
     }
 }
 
@@ -428,9 +315,8 @@ fn main() -> ! {
     let usb = UsbSerialJtag::new(peripherals.USB_DEVICE);
     let (_rx, mut tx) = usb.split();
     let mut delay = Delay::new();
-    log_line(&mut tx, "badge: starting\n");
+    log_line(&mut tx, "badge: dice starting\n");
 
-    // --- I2C expander (buttons, LEDs, display reset) ---
     let mut i2c = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -439,21 +325,17 @@ fn main() -> ! {
     .with_sda(peripherals.GPIO38)
     .with_scl(peripherals.GPIO39);
 
-    let expander = probe_expander(&mut tx, &mut i2c);
+    let expander = probe_expander(&mut i2c);
     if expander == 0 {
         log_line(&mut tx, "ERROR: expander not found on I2C\n");
         loop {}
     }
 
-    // Port 0 = button inputs, port 1 bits 0..4 = outputs (reset + LEDs).
     i2c.write(expander, &[REG_CONFIG_0, PORT_0_INPUTS])
         .expect("configure expander port 0");
     i2c.write(expander, &[REG_CONFIG_1, PORT_1_OUTPUT_MASK])
         .expect("configure expander port 1");
-    log_line(&mut tx, "expander configured\n");
 
-    // Bring the display out of reset via P1.0, matching the reference
-    // driver's timing (idle high, pulse low, release high, then settle).
     i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
         .expect("set display reset idle");
     delay.delay_millis(10);
@@ -463,9 +345,7 @@ fn main() -> ! {
     i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
         .expect("release display reset");
     delay.delay_millis(120);
-    log_line(&mut tx, "display reset released\n");
 
-    // --- SPI to the panel ---
     let mut spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -482,16 +362,18 @@ fn main() -> ! {
     init_display(&mut spi, &mut dc, &mut cs, &mut delay);
     log_line(&mut tx, "display initialised\n");
 
-    // --- Sevens game, rotating hot-seat mode ---
+    // --- Dice game (SLSO8, rotating hot-seat) ---
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
-    log_line(&mut tx, "sevens starting\n");
 
-    let mut rng = Prng::new(0x53e7);
-    let mut game = Game::new(&mut rng);
+    let mut rng = Prng::new(0xd1ce);
+    let mut game = Game::new();
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
-    let mut hand_cursor: usize = 0;
+    let mut selector: usize = 0;
+    let mut marked = [false; DICE_COUNT];
+    let mut phase = Phase::AwaitRoll;
+    let mut bad_frames: u32 = 0;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -500,66 +382,145 @@ fn main() -> ! {
         let active_mask = !port0;
         input.update(active_mask, now_ms);
 
-        let current = game.current_player();
-        // Ordered copy of the current player's hand for the bottom rack.
-        let mut hand_cards = [Card::new(Suit::Spades, 1).unwrap(); MAX_HAND];
-        let mut hand_len = 0;
-        for card in game.hand(current).iter() {
-            hand_cards[hand_len] = card;
-            hand_len += 1;
-        }
-        sort_cards(&mut hand_cards[..hand_len]);
-        if hand_cursor >= hand_len {
-            hand_cursor = hand_len.saturating_sub(1);
-        }
+        let in_play = game.dice_count();
 
-        if !game.round_over() && !game.game_over() {
-            // Move the cursor across the hand rack (left/right).
-            if input.just_pressed(Button::Btn1) {
-                hand_cursor = (hand_cursor + hand_len - 1) % hand_len.max(1);
+        // --- Input handling per phase ---
+        match phase {
+            Phase::AwaitRoll => {
+                if input.just_pressed(Button::Btn6) {
+                    let thrown = game.dice_count();
+                    let scorable = game.throw(&mut rng);
+                    let mut values = [0u8; DICE_COUNT];
+                    values[..thrown].copy_from_slice(game.dice());
+                    animate_roll(
+                        &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
+                        &values[..thrown], &mut rng,
+                    );
+                    selector = 0;
+                    marked = [false; DICE_COUNT];
+                    phase = if scorable { Phase::Select } else { Phase::TurnOver };
+                }
             }
-            if input.just_pressed(Button::Btn3) {
-                hand_cursor = (hand_cursor + 1) % hand_len.max(1);
-            }
-
-            // Play the selected card (Btn5 or Btn7).
-            if input.just_pressed(Button::Btn5) || input.just_pressed(Button::Btn7) {
-                let selection = hand_cards
-                    .get(hand_cursor.min(hand_len.saturating_sub(1)))
-                    .copied();
-                if let Some(card) = selection {
-                    match game.play(card) {
-                        Ok(PlayOutcome::Played) => {
-                            log_line(&mut tx, "played\n");
-                            hand_cursor = 0;
+            Phase::Select if in_play > 0 => {
+                if input.just_pressed(Button::Btn1) {
+                    selector = (selector + in_play - 1) % in_play;
+                }
+                if input.just_pressed(Button::Btn3) {
+                    selector = (selector + 1) % in_play;
+                }
+                if input.just_pressed(Button::Btn7) {
+                    marked[selector] = !marked[selector];
+                }
+                if input.just_pressed(Button::Btn5) {
+                    let mut chosen = [0usize; DICE_COUNT];
+                    let mut count = 0;
+                    for index in 0..in_play {
+                        if marked[index] && count < DICE_COUNT {
+                            chosen[count] = index;
+                            count += 1;
                         }
-                        Ok(PlayOutcome::RoundFinished) => log_line(&mut tx, "round finished\n"),
-                        Err(_) => log_line(&mut tx, "illegal\n"),
+                    }
+                    match game.score_selected(&chosen[..count]) {
+                        Ok(_) => {
+                            selector = 0;
+                            marked = [false; DICE_COUNT];
+                            phase = if game.dice_count() == 0 {
+                                Phase::AwaitRoll // hot dice
+                            } else {
+                                Phase::Select
+                            };
+                        }
+                        Err(_) => bad_frames = 9, // invalid selection flash
+                    }
+                }
+                if input.just_pressed(Button::Btn6) {
+                    let thrown = game.dice_count();
+                    let scorable = game.throw(&mut rng);
+                    let mut values = [0u8; DICE_COUNT];
+                    values[..thrown].copy_from_slice(game.dice());
+                    animate_roll(
+                        &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
+                        &values[..thrown], &mut rng,
+                    );
+                    selector = 0;
+                    marked = [false; DICE_COUNT];
+                    phase = if scorable { Phase::Select } else { Phase::TurnOver };
+                }
+                if input.just_pressed(Button::Btn8) {
+                    game.bank();
+                    phase = Phase::TurnOver;
+                }
+            }
+            _ => {
+                if input.just_pressed(Button::Btn8) {
+                    selector = 0;
+                    marked = [false; DICE_COUNT];
+                    phase = Phase::AwaitRoll;
+                }
+            }
+        }
+
+        if bad_frames > 0 {
+            bad_frames -= 1;
+        }
+
+        // --- Render ---
+        canvas.clear(slso8::NAVY);
+
+        canvas.draw_text("P0", 8, 5, 1, slso8::ORANGE);
+        draw_number(&mut canvas, 32, 5, game.score(0), slso8::CREAM);
+        canvas.draw_text("P1", 200, 5, 1, slso8::ORANGE);
+        draw_number(&mut canvas, 224, 5, game.score(1), slso8::CREAM);
+        canvas.draw_text("TURN", 86, 5, 1, slso8::PEACH);
+        draw_number(&mut canvas, 118, 5, game.turn_score(), slso8::CREAM);
+
+        let dice = game.dice();
+        let count = dice.len();
+        match phase {
+            Phase::Select => {
+                for index in 0..count {
+                    let x = die_slot(count, index);
+                    let selected = index == selector;
+                    let size = if selected { DIE + 8 } else { DIE };
+                    let cy = 104 - if selected { 6 } else { 0 };
+                    draw_die(&mut canvas, x, cy, size, dice[index]);
+                    if marked[index] {
+                        draw_centered(&mut canvas, cy + size / 2 + 6, "*", slso8::ORANGE);
+                    }
+                    if selected {
+                        canvas.rect(
+                            x - size / 2 - 2,
+                            cy - size / 2 - 2,
+                            size + 4,
+                            size + 4,
+                            slso8::ORANGE,
+                        );
                     }
                 }
             }
-
-            // Pass / draw (Btn6): draw one card from each opponent and skip the
-            // turn, whether stuck or choosing to hold back.
-            if input.just_pressed(Button::Btn6) {
-                game.draw_from_others(&mut rng);
-                hand_cursor = 0;
+            _ => {
+                for index in 0..game.dice_count() {
+                    draw_slot(&mut canvas, die_slot(game.dice_count(), index), 104, DIE);
+                }
             }
-        } else if input.just_pressed(Button::Btn8) {
-            // Next round, or a brand-new game after reaching 250 points.
-            if game.game_over() {
-                game = Game::new(&mut rng);
-            } else {
-                game.next_round(&mut rng);
-            }
-            hand_cursor = 0;
         }
 
-        // --- Render the rotating table, current player always at the bottom. ---
-        canvas.clear(palette::BLACK);
-        draw_board(&mut canvas, &game);
-        draw_opponents(&mut canvas, &game, current);
-        draw_hand_rack(&mut canvas, &hand_cards[..hand_len], hand_cursor, &game);
+        if bad_frames > 0 {
+            draw_centered(&mut canvas, 178, "!! INVALID !!", slso8::BURNT);
+        } else {
+            match phase {
+                Phase::AwaitRoll => {
+                    draw_centered(&mut canvas, 186, "ROLL (B6)", slso8::CREAM);
+                }
+                Phase::Select => {
+                    draw_centered(&mut canvas, 172, "MARK B7 . SCORE B5", slso8::PEACH);
+                    draw_centered(&mut canvas, 184, "ROLL B6 . BANK B8", slso8::PEACH);
+                }
+                Phase::TurnOver => {
+                    draw_centered(&mut canvas, 176, "TURN OVER - B8", slso8::CREAM);
+                }
+            }
+        }
 
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
         delay.delay_millis(33);
