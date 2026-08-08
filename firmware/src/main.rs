@@ -271,9 +271,10 @@ fn main() -> ! {
     // Bouncing disc, labelled with its position and velocity.
     const CENTRE: (f32, f32) = (120.0, 120.0);
     const BOUNDARY: f32 = 92.0;
-    const BALL_RADIUS: i32 = 8;
+    let mut ball_radius: i32 = 8;
     let mut position: (f32, f32) = (120.0, 60.0);
     let mut velocity: (f32, f32) = (2.5, 2.0);
+    let mut ball_color = palette::WHITE;
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
 
@@ -290,29 +291,58 @@ fn main() -> ! {
         if input.just_pressed(Button::Btn1) {
             writeln!(serial, "button 1 pressed").ok();
         }
-        let ball_color = if input.pressed(Button::Btn1) {
-            palette::RED
-        } else if input.pressed(Button::Btn2) {
-            palette::GREEN
-        } else if input.pressed(Button::Btn3) {
-            palette::BLUE
-        } else if input.pressed(Button::Btn4) {
-            palette::YELLOW
-        } else {
-            palette::WHITE
-        };
+        // Tap a colour button to select a persistent ball colour.
+        if input.just_pressed(Button::Btn1) {
+            ball_color = palette::RED;
+            writeln!(serial, "colour red").ok();
+        } else if input.just_pressed(Button::Btn2) {
+            ball_color = palette::GREEN;
+            writeln!(serial, "colour green").ok();
+        } else if input.just_pressed(Button::Btn3) {
+            ball_color = palette::BLUE;
+            writeln!(serial, "colour blue").ok();
+        } else if input.just_pressed(Button::Btn4) {
+            ball_color = palette::YELLOW;
+            writeln!(serial, "colour yellow").ok();
+        }
+
+        // Holding the control buttons applies their effect continuously.
+        if input.pressed(Button::Btn5) {
+            velocity.0 *= 1.15;
+            velocity.1 *= 1.15;
+        } else if input.pressed(Button::Btn6) {
+            velocity.0 *= 0.85;
+            velocity.1 *= 0.85;
+        }
+        if input.pressed(Button::Btn7) {
+            ball_radius = ball_radius.saturating_add(3).min(40);
+        } else if input.pressed(Button::Btn8) {
+            ball_radius = ball_radius.saturating_sub(3).max(2);
+        }
+
+        // Keep the ball from crawling or escaping; scale speed back in bounds.
+        let speed = raylib_camp::math::sqrt(velocity.0 * velocity.0 + velocity.1 * velocity.1);
+        if speed > 20.0 {
+            let scale = 20.0 / speed;
+            velocity.0 *= scale;
+            velocity.1 *= scale;
+        } else if speed < 0.3 {
+            let scale = 0.3 / speed;
+            velocity.0 *= scale;
+            velocity.1 *= scale;
+        }
 
         let relative_x = position.0 - CENTRE.0;
         let relative_y = position.1 - CENTRE.1;
         let distance = raylib_camp::math::sqrt(relative_x * relative_x + relative_y * relative_y);
-        if distance > 0.0 && distance + BALL_RADIUS as f32 > BOUNDARY {
+        if distance > 0.0 && distance + ball_radius as f32 > BOUNDARY {
             // Reflect velocity about the boundary normal and push the disc back in.
             let normal_x = relative_x / distance;
             let normal_y = relative_y / distance;
             let dot = velocity.0 * normal_x + velocity.1 * normal_y;
             velocity.0 -= 2.0 * dot * normal_x;
             velocity.1 -= 2.0 * dot * normal_y;
-            let overhang = distance + BALL_RADIUS as f32 - BOUNDARY;
+            let overhang = distance + ball_radius as f32 - BOUNDARY;
             position.0 -= normal_x * overhang;
             position.1 -= normal_y * overhang;
         }
@@ -321,7 +351,7 @@ fn main() -> ! {
         canvas.circle_filled(
             position.0 as i32,
             position.1 as i32,
-            BALL_RADIUS,
+            ball_radius,
             ball_color,
         );
 
