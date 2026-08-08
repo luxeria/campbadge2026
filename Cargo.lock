@@ -700,6 +700,7 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
+ "games",
  "raylib_camp",
 ]
 
@@ -750,6 +751,9 @@ dependencies = [
 [[package]]
 name = "games"
 version = "0.1.0"
+dependencies = [
+ "raylib_camp",
+]
 
 [[package]]
 name = "gcd"
