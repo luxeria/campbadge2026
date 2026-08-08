@@ -66,17 +66,72 @@ fn send_data(
     cs.set_high();
 }
 
-/// Runs the minimal GC9A01A initialisation sequence.
+/// GC9A01A register tuning table, transcribed from Adafruit's initialisation.
+/// Each pair is a command byte followed by its parameter bytes.
+const INIT_SEQUENCE: &[(&[u8], &[u8])] = &[
+    (&[0xef], &[]),
+    (&[0xeb], &[0x14]),
+    (&[0xfe], &[]),
+    (&[0xef], &[]),
+    (&[0xeb], &[0x14]),
+    (&[0x84], &[0x40]),
+    (&[0x85], &[0xff]),
+    (&[0x86], &[0xff]),
+    (&[0x87], &[0xff]),
+    (&[0x88], &[0x0a]),
+    (&[0x89], &[0x21]),
+    (&[0x8a], &[0x00]),
+    (&[0x8b], &[0x80]),
+    (&[0x8c], &[0x01]),
+    (&[0x8d], &[0x01]),
+    (&[0x8e], &[0xff]),
+    (&[0x8f], &[0xff]),
+    (&[0xb6], &[0x00, 0x00]),
+    (&[0x36], &[0x48]), // MADCTL: MX | BGR
+    (&[0x3a], &[0x05]), // RGB565 pixel format
+    (&[0x90], &[0x08, 0x08, 0x08, 0x08]),
+    (&[0xbd], &[0x06]),
+    (&[0xbc], &[0x00]),
+    (&[0xff], &[0x60, 0x01, 0x04]),
+    (&[0xc3], &[0x13]),
+    (&[0xc4], &[0x13]),
+    (&[0xc9], &[0x22]),
+    (&[0xbe], &[0x11]),
+    (&[0xe1], &[0x10, 0x0e]),
+    (&[0xdf], &[0x21, 0x0c, 0x02]),
+    (&[0xf0], &[0x45, 0x09, 0x08, 0x08, 0x26, 0x2a]),
+    (&[0xf1], &[0x43, 0x70, 0x72, 0x36, 0x37, 0x6f]),
+    (&[0xf2], &[0x45, 0x09, 0x08, 0x08, 0x26, 0x2a]),
+    (&[0xf3], &[0x43, 0x70, 0x72, 0x36, 0x37, 0x6f]),
+    (&[0xed], &[0x1b, 0x0b]),
+    (&[0xae], &[0x77]),
+    (&[0xcd], &[0x63]),
+    (&[0xe8], &[0x34]),
+    (&[0x62], &[0x18, 0x0d, 0x71, 0xed, 0x70, 0x70, 0x18, 0x0f, 0x71, 0xef, 0x70, 0x70]),
+    (&[0x63], &[0x18, 0x11, 0x71, 0xf1, 0x70, 0x70, 0x18, 0x13, 0x71, 0xf3, 0x70, 0x70]),
+    (&[0x64], &[0x28, 0x29, 0xf1, 0x01, 0xf1, 0x00, 0x07]),
+    (&[0x66], &[0x3c, 0x00, 0xcd, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00]),
+    (&[0x67], &[0x00, 0x3c, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98]),
+    (&[0x74], &[0x10, 0x85, 0x80, 0x00, 0x00, 0x4e, 0x00]),
+    (&[0x98], &[0x3e, 0x07]),
+    (&[0x35], &[]), // tearing effect line on
+    (&[0x21], &[]), // display inversion on
+];
+
+/// Runs the full GC9A01A initialisation sequence.
 fn init_display(
     spi: &mut Spi<'_, esp_hal::Blocking>,
     dc: &mut Output,
     cs: &mut Output,
     delay: &mut Delay,
 ) {
-    send_command(spi, dc, cs, 0x36);
-    send_data(spi, dc, cs, &[0x00]); // MADCTL, memory orientation
-    send_command(spi, dc, cs, 0x3a);
-    send_data(spi, dc, cs, &[0x05]); // RGB565 pixel format
+    for &(command, data) in INIT_SEQUENCE {
+        send_command(spi, dc, cs, command[0]);
+        if !data.is_empty() {
+            send_data(spi, dc, cs, data);
+        }
+    }
+
     send_command(spi, dc, cs, 0x11); // sleep out
     delay.delay_millis(120);
     send_command(spi, dc, cs, 0x29); // display on
@@ -124,6 +179,17 @@ fn probe_expander(serial: &mut UsbSerialJtag<'_, esp_hal::Blocking>, i2c: &mut I
     0x00
 }
 
+/// Draws a static demonstration scene using the engine's drawing primitives.
+fn draw_demo_scene(canvas: &mut Canvas) {
+    canvas.rect(30, 40, 70, 50, palette::RED);
+    canvas.rect_filled(120, 40, 70, 50, palette::GREEN);
+    canvas.circle(70, 150, 20, palette::YELLOW);
+    canvas.circle_filled(150, 150, 20, palette::CYAN);
+    canvas.triangle_filled((100, 200), (160, 200), (130, 165), palette::MAGENTA);
+    canvas.line(20, 20, 220, 30, palette::ORANGE);
+    canvas.draw_text("CAMP 2026", 70, 4, 2, palette::WHITE);
+}
+
 /// Application entry point.
 #[main]
 fn main() -> ! {
@@ -154,13 +220,17 @@ fn main() -> ! {
         .expect("configure expander port 1");
     writeln!(serial, "expander configured").ok();
 
-    // Bring the display out of reset via P1.0.
+    // Bring the display out of reset via P1.0, matching the reference
+    // driver's timing (idle high, pulse low, release high, then settle).
+    i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
+        .expect("set display reset idle");
+    delay.delay_millis(10);
     i2c.write(expander, &[REG_OUTPUT_1, 0x00])
         .expect("assert display reset");
-    delay.delay_millis(50);
+    delay.delay_millis(10);
     i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
         .expect("release display reset");
-    delay.delay_millis(20);
+    delay.delay_millis(120);
     writeln!(serial, "display reset released").ok();
 
     // --- SPI to the panel ---
@@ -180,18 +250,46 @@ fn main() -> ! {
     init_display(&mut spi, &mut dc, &mut cs, &mut delay);
     writeln!(serial, "display initialised").ok();
 
-    // --- Draw a solid colour slide from the engine framebuffer ---
-    // Borrow the static once via a raw pointer so the canvas lives for the
-    // whole loop without repeatedly forming a mutable reference to the static.
+    // --- Render a demonstration scene from the engine framebuffer ---
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
-    let slide = [palette::RED, palette::GREEN, palette::BLUE];
-    let mut frame: usize = 0;
+    writeln!(serial, "rendering demo").ok();
+
+    // Bouncing disc, labelled with its position and velocity.
+    const CENTRE: (f32, f32) = (120.0, 120.0);
+    const BOUNDARY: f32 = 92.0;
+    const BALL_RADIUS: i32 = 8;
+    let mut position: (f32, f32) = (120.0, 60.0);
+    let mut velocity: (f32, f32) = (2.5, 2.0);
+
     loop {
-        canvas.clear(slide[frame % slide.len()]);
+        canvas.clear(palette::BLACK);
+        draw_demo_scene(&mut canvas);
+
+        let relative_x = position.0 - CENTRE.0;
+        let relative_y = position.1 - CENTRE.1;
+        let distance = raylib_camp::math::sqrt(relative_x * relative_x + relative_y * relative_y);
+        if distance > 0.0 && distance + BALL_RADIUS as f32 > BOUNDARY {
+            // Reflect velocity about the boundary normal and push the disc back in.
+            let normal_x = relative_x / distance;
+            let normal_y = relative_y / distance;
+            let dot = velocity.0 * normal_x + velocity.1 * normal_y;
+            velocity.0 -= 2.0 * dot * normal_x;
+            velocity.1 -= 2.0 * dot * normal_y;
+            let overhang = distance + BALL_RADIUS as f32 - BOUNDARY;
+            position.0 -= normal_x * overhang;
+            position.1 -= normal_y * overhang;
+        }
+        position.0 += velocity.0;
+        position.1 += velocity.1;
+        canvas.circle_filled(
+            position.0 as i32,
+            position.1 as i32,
+            BALL_RADIUS,
+            palette::WHITE,
+        );
+
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
-        writeln!(serial, "showing colour {}", frame % slide.len()).ok();
-        frame += 1;
-        delay.delay_millis(1000);
+        delay.delay_millis(33);
     }
 }
