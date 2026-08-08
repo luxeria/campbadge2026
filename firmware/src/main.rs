@@ -23,6 +23,8 @@ use raylib_camp::canvas::{Canvas, display};
 use raylib_camp::color::palette;
 use raylib_camp::input::{Button, Input};
 
+use games::snake::{Direction, Snake, StepResult};
+
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -246,15 +248,23 @@ fn read_expander_register(
     value[0]
 }
 
-/// Draws a static demonstration scene using the engine's drawing primitives.
-fn draw_demo_scene(canvas: &mut Canvas) {
-    canvas.rect(30, 40, 70, 50, palette::RED);
-    canvas.rect_filled(120, 40, 70, 50, palette::GREEN);
-    canvas.circle(70, 150, 20, palette::YELLOW);
-    canvas.circle_filled(150, 150, 20, palette::CYAN);
-    canvas.triangle_filled((100, 200), (160, 200), (130, 165), palette::MAGENTA);
-    canvas.line(20, 20, 220, 30, palette::ORANGE);
-    canvas.draw_text("CAMP 2026", 70, 4, 2, palette::WHITE);
+/// Draws a small score numeral near the bottom of the round panel.
+fn draw_score(canvas: &mut Canvas, score: usize) {
+    let mut buffer = [0u8; 8];
+    let mut value = score;
+    let mut length = 0;
+    if value == 0 {
+        buffer[0] = b'0';
+        length = 1;
+    }
+    while value > 0 && length < buffer.len() {
+        buffer[length] = b'0' + (value % 10) as u8;
+        value /= 10;
+        length += 1;
+    }
+    buffer[..length].reverse();
+    let text = core::str::from_utf8(&buffer[..length]).unwrap_or("0");
+    canvas.draw_text(text, 108, 218, 1, palette::WHITE);
 }
 
 /// Application entry point.
@@ -318,95 +328,62 @@ fn main() -> ! {
     init_display(&mut spi, &mut dc, &mut cs, &mut delay);
     log_line(&mut tx, "display initialised\n");
 
-    // --- Render a demonstration scene from the engine framebuffer ---
+    // --- Snake game from the `games` crate ---
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
-    log_line(&mut tx, "rendering demo\n");
+    log_line(&mut tx, "snake starting\n");
 
-    // Bouncing disc, labelled with its position and velocity.
-    const CENTRE: (f32, f32) = (120.0, 120.0);
-    const BOUNDARY: f32 = 92.0;
-    let mut ball_radius: i32 = 8;
-    let mut position: (f32, f32) = (120.0, 60.0);
-    let mut velocity: (f32, f32) = (2.5, 2.0);
-    let mut ball_color = palette::WHITE;
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
+    let mut tick_accum: u32 = 0;
+    const BASE_TICK_MS: u32 = 220;
+    const MIN_TICK_MS: u32 = 45;
+    let mut snake = Snake::new(0x5eed);
+    let mut game_over = false;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
-        canvas.clear(palette::BLACK);
-        draw_demo_scene(&mut canvas);
 
-        // Buttons on expander port 0 read low while pressed, so the set of
-        // pressed bits is the inverse of the raw port byte.
+        // Buttons on expander port 0 read low while pressed; invert the byte.
         let port0 = read_expander_register(&mut i2c, expander, REG_INPUT_0);
         let active_mask = !port0;
         input.update(active_mask, now_ms);
 
-        // Tap a colour button to select a persistent ball colour.
+        // Physical layout on this badge: up = Btn2, right = Btn3.
         if input.just_pressed(Button::Btn1) {
-            ball_color = palette::RED;
-            log_line(&mut tx, "colour red\n");
+            snake.set_direction(Direction::Left);
         } else if input.just_pressed(Button::Btn2) {
-            ball_color = palette::GREEN;
-            log_line(&mut tx, "colour green\n");
+            snake.set_direction(Direction::Up);
         } else if input.just_pressed(Button::Btn3) {
-            ball_color = palette::BLUE;
-            log_line(&mut tx, "colour blue\n");
+            snake.set_direction(Direction::Right);
         } else if input.just_pressed(Button::Btn4) {
-            ball_color = palette::YELLOW;
-            log_line(&mut tx, "colour yellow\n");
+            snake.set_direction(Direction::Down);
+        }
+        if game_over && input.just_pressed(Button::Btn8) {
+            snake = Snake::new(now_ms);
+            game_over = false;
         }
 
-        // Holding the control buttons applies their effect continuously.
-        if input.pressed(Button::Btn5) {
-            velocity.0 *= 1.15;
-            velocity.1 *= 1.15;
-        } else if input.pressed(Button::Btn6) {
-            velocity.0 *= 0.85;
-            velocity.1 *= 0.85;
-        }
-        if input.pressed(Button::Btn7) {
-            ball_radius = ball_radius.saturating_add(3).min(40);
-        } else if input.pressed(Button::Btn8) {
-            ball_radius = ball_radius.saturating_sub(3).max(2);
+        // The snake quickens as it grows, never below the floor.
+        let tick_ms = BASE_TICK_MS
+            .saturating_sub(snake.score() as u32 * 12)
+            .max(MIN_TICK_MS);
+        tick_accum += 33;
+        if !game_over && tick_accum >= tick_ms {
+            tick_accum -= tick_ms;
+            if snake.update() == StepResult::Died {
+                game_over = true;
+            }
         }
 
-        // Keep the ball from crawling or escaping; scale speed back in bounds.
-        let speed = raylib_camp::math::sqrt(velocity.0 * velocity.0 + velocity.1 * velocity.1);
-        if speed > 20.0 {
-            let scale = 20.0 / speed;
-            velocity.0 *= scale;
-            velocity.1 *= scale;
-        } else if speed < 0.3 {
-            let scale = 0.3 / speed;
-            velocity.0 *= scale;
-            velocity.1 *= scale;
+        canvas.clear(palette::BLACK);
+        if game_over {
+            canvas.draw_text("GAME OVER", 76, 100, 2, palette::RED);
+            draw_score(&mut canvas, snake.score());
+        } else {
+            snake.draw(&mut canvas);
+            draw_score(&mut canvas, snake.score());
         }
-
-        let relative_x = position.0 - CENTRE.0;
-        let relative_y = position.1 - CENTRE.1;
-        let distance = raylib_camp::math::sqrt(relative_x * relative_x + relative_y * relative_y);
-        if distance > 0.0 && distance + ball_radius as f32 > BOUNDARY {
-            // Reflect velocity about the boundary normal and push the disc back in.
-            let normal_x = relative_x / distance;
-            let normal_y = relative_y / distance;
-            let dot = velocity.0 * normal_x + velocity.1 * normal_y;
-            velocity.0 -= 2.0 * dot * normal_x;
-            velocity.1 -= 2.0 * dot * normal_y;
-            let overhang = distance + ball_radius as f32 - BOUNDARY;
-            position.0 -= normal_x * overhang;
-            position.1 -= normal_y * overhang;
-        }
-        position.0 += velocity.0;
-        position.1 += velocity.1;
-        canvas.circle_filled(
-            position.0 as i32,
-            position.1 as i32,
-            ball_radius,
-            ball_color,
-        );
 
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
         delay.delay_millis(33);

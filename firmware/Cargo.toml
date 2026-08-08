@@ -8,4 +8,5 @@ esp-backtrace = { version = "0.19", features = ["esp32s3", "panic-handler", "pri
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-println = { version = "0.17", features = ["esp32s3"] }
+games = { path = "../games" }
 raylib_camp = { path = "../raylib_camp" }
