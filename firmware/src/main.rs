@@ -1,14 +1,13 @@
 //! Firmware entry point for the LuxCamp badge (M5Stack Atom S3 Lite).
 //!
-//! Display bring-up: initialises the I2C expander (which drives the display
-//! reset), configures SPI to the GC9A01A round panel, initialises the panel,
-//! and pushes a solid-colour slide from the `raylib_camp` framebuffer. Each
-//! step is logged over native-USB serial so failures are easy to localise.
+//! Brings up the I2C expander (display reset + buttons + LEDs), initialises the
+//! round GC9A01A panel over SPI, and runs an interactive demo driven by the
+//! `raylib_camp` engine. Debug logs are emitted over native-USB serial in a
+//! strictly non-blocking way, so the game runs the same whether or not a serial
+//! monitor is attached.
 
 #![no_std]
 #![no_main]
-
-use core::fmt::Write;
 
 use esp_backtrace as _;
 use esp_hal::delay::Delay;
@@ -18,7 +17,7 @@ use esp_hal::main;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
-use esp_hal::usb_serial_jtag::UsbSerialJtag;
+use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagTx};
 
 use raylib_camp::canvas::{Canvas, display};
 use raylib_camp::color::palette;
@@ -46,6 +45,58 @@ const PANEL_SIZE: usize = 240;
 
 /// Framebuffer backing storage (RGB565), big enough for the whole panel.
 static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
+
+/// A tiny `core::fmt::Write` target writing into a fixed stack buffer.
+struct ByteWriter<'a> {
+    buffer: &'a mut [u8],
+    length: usize,
+}
+
+impl core::fmt::Write for ByteWriter<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        let bytes = text.as_bytes();
+        let remaining = &mut self.buffer[self.length..];
+        let count = bytes.len().min(remaining.len());
+        remaining[..count].copy_from_slice(&bytes[..count]);
+        self.length += count;
+        Ok(())
+    }
+}
+
+/// Emits a log line without ever blocking the caller.
+///
+/// The native-USB serial FIFO only drains when a host reads it, so a blocking
+/// write stalls the game whenever no monitor is attached. Bytes are pushed one
+/// at a time and the write stops as soon as the FIFO is full, dropping whatever
+/// does not fit; a non-blocking flush is attempted so partial lines still leave
+/// the peripheral when a host is present.
+fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
+    for byte in line.bytes() {
+        if tx.write_byte_nb(byte).is_err() {
+            break;
+        }
+    }
+    let _ = tx.flush_tx_nb();
+}
+
+/// Writes a formatted message to the serial output non-blockingly.
+///
+/// Formats into a fixed stack buffer so the `no_std` firmware needs no heap.
+fn log_fmt(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, message: core::fmt::Arguments<'_>) {
+    let (storage, length) = {
+        let mut storage = [0u8; 64];
+        let length = {
+            let mut writer = ByteWriter {
+                buffer: &mut storage,
+                length: 0,
+            };
+            let _ = core::fmt::write(&mut writer, message);
+            writer.length
+        };
+        (storage, length)
+    };
+    log_line(tx, core::str::from_utf8(&storage[..length]).unwrap_or(""));
+}
 
 /// Sends a single command byte to the panel.
 fn send_command(spi: &mut Spi<'_, esp_hal::Blocking>, dc: &mut Output, cs: &mut Output, command: u8) {
@@ -170,26 +221,18 @@ fn flush_screen(
 
 /// Probes the I2C bus for the badge's I/O expander, which is addressed in the
 /// TCA9539 range 0x74..=0x77 depending on its address pins.
-fn probe_expander(serial: &mut UsbSerialJtag<'_, esp_hal::Blocking>, i2c: &mut I2c<'_, esp_hal::Blocking>) -> u8 {
+fn probe_expander(
+    tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>,
+    i2c: &mut I2c<'_, esp_hal::Blocking>,
+) -> u8 {
     let mut dummy = [0u8; 1];
     for address in 0x74..=0x77 {
         if i2c.read(address, &mut dummy).is_ok() {
-            writeln!(serial, "expander found at 0x{address:02x}").ok();
+            log_fmt(tx, format_args!("expander found at 0x{address:02x}\n"));
             return address;
         }
     }
     0x00
-}
-
-/// Draws a static demonstration scene using the engine's drawing primitives.
-fn draw_demo_scene(canvas: &mut Canvas) {
-    canvas.rect(30, 40, 70, 50, palette::RED);
-    canvas.rect_filled(120, 40, 70, 50, palette::GREEN);
-    canvas.circle(70, 150, 20, palette::YELLOW);
-    canvas.circle_filled(150, 150, 20, palette::CYAN);
-    canvas.triangle_filled((100, 200), (160, 200), (130, 165), palette::MAGENTA);
-    canvas.line(20, 20, 220, 30, palette::ORANGE);
-    canvas.draw_text("CAMP 2026", 70, 4, 2, palette::WHITE);
 }
 
 /// Reads one byte from an I2C register on the expander.
@@ -203,13 +246,25 @@ fn read_expander_register(
     value[0]
 }
 
+/// Draws a static demonstration scene using the engine's drawing primitives.
+fn draw_demo_scene(canvas: &mut Canvas) {
+    canvas.rect(30, 40, 70, 50, palette::RED);
+    canvas.rect_filled(120, 40, 70, 50, palette::GREEN);
+    canvas.circle(70, 150, 20, palette::YELLOW);
+    canvas.circle_filled(150, 150, 20, palette::CYAN);
+    canvas.triangle_filled((100, 200), (160, 200), (130, 165), palette::MAGENTA);
+    canvas.line(20, 20, 220, 30, palette::ORANGE);
+    canvas.draw_text("CAMP 2026", 70, 4, 2, palette::WHITE);
+}
+
 /// Application entry point.
 #[main]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    let mut serial = UsbSerialJtag::new(peripherals.USB_DEVICE);
+    let usb = UsbSerialJtag::new(peripherals.USB_DEVICE);
+    let (_rx, mut tx) = usb.split();
     let mut delay = Delay::new();
-    writeln!(serial, "badge: bring-up starting").ok();
+    log_line(&mut tx, "badge: starting\n");
 
     // --- I2C expander (buttons, LEDs, display reset) ---
     let mut i2c = I2c::new(
@@ -220,9 +275,9 @@ fn main() -> ! {
     .with_sda(peripherals.GPIO38)
     .with_scl(peripherals.GPIO39);
 
-    let expander = probe_expander(&mut serial, &mut i2c);
+    let expander = probe_expander(&mut tx, &mut i2c);
     if expander == 0 {
-        writeln!(serial, "ERROR: expander not found on I2C").ok();
+        log_line(&mut tx, "ERROR: expander not found on I2C\n");
         loop {}
     }
 
@@ -231,7 +286,7 @@ fn main() -> ! {
         .expect("configure expander port 0");
     i2c.write(expander, &[REG_CONFIG_1, PORT_1_OUTPUT_MASK])
         .expect("configure expander port 1");
-    writeln!(serial, "expander configured").ok();
+    log_line(&mut tx, "expander configured\n");
 
     // Bring the display out of reset via P1.0, matching the reference
     // driver's timing (idle high, pulse low, release high, then settle).
@@ -244,7 +299,7 @@ fn main() -> ! {
     i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
         .expect("release display reset");
     delay.delay_millis(120);
-    writeln!(serial, "display reset released").ok();
+    log_line(&mut tx, "display reset released\n");
 
     // --- SPI to the panel ---
     let mut spi = Spi::new(
@@ -261,12 +316,12 @@ fn main() -> ! {
     let mut cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
 
     init_display(&mut spi, &mut dc, &mut cs, &mut delay);
-    writeln!(serial, "display initialised").ok();
+    log_line(&mut tx, "display initialised\n");
 
     // --- Render a demonstration scene from the engine framebuffer ---
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
-    writeln!(serial, "rendering demo").ok();
+    log_line(&mut tx, "rendering demo\n");
 
     // Bouncing disc, labelled with its position and velocity.
     const CENTRE: (f32, f32) = (120.0, 120.0);
@@ -288,22 +343,20 @@ fn main() -> ! {
         let port0 = read_expander_register(&mut i2c, expander, REG_INPUT_0);
         let active_mask = !port0;
         input.update(active_mask, now_ms);
-        if input.just_pressed(Button::Btn1) {
-            writeln!(serial, "button 1 pressed").ok();
-        }
+
         // Tap a colour button to select a persistent ball colour.
         if input.just_pressed(Button::Btn1) {
             ball_color = palette::RED;
-            writeln!(serial, "colour red").ok();
+            log_line(&mut tx, "colour red\n");
         } else if input.just_pressed(Button::Btn2) {
             ball_color = palette::GREEN;
-            writeln!(serial, "colour green").ok();
+            log_line(&mut tx, "colour green\n");
         } else if input.just_pressed(Button::Btn3) {
             ball_color = palette::BLUE;
-            writeln!(serial, "colour blue").ok();
+            log_line(&mut tx, "colour blue\n");
         } else if input.just_pressed(Button::Btn4) {
             ball_color = palette::YELLOW;
-            writeln!(serial, "colour yellow").ok();
+            log_line(&mut tx, "colour yellow\n");
         }
 
         // Holding the control buttons applies their effect continuously.
