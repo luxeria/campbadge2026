@@ -22,11 +22,13 @@ use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
 use raylib_camp::canvas::{Canvas, display};
 use raylib_camp::color::palette;
+use raylib_camp::input::{Button, Input};
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
 
 /// TCA9535/TCA9539 registers.
+const REG_INPUT_0: u8 = 0x00;
 const REG_CONFIG_0: u8 = 0x06;
 const REG_CONFIG_1: u8 = 0x07;
 const REG_OUTPUT_1: u8 = 0x03;
@@ -190,6 +192,17 @@ fn draw_demo_scene(canvas: &mut Canvas) {
     canvas.draw_text("CAMP 2026", 70, 4, 2, palette::WHITE);
 }
 
+/// Reads one byte from an I2C register on the expander.
+fn read_expander_register(
+    i2c: &mut I2c<'_, esp_hal::Blocking>,
+    address: u8,
+    register: u8,
+) -> u8 {
+    let mut value = [0u8; 1];
+    let _ = i2c.write_read(address, &[register], &mut value);
+    value[0]
+}
+
 /// Application entry point.
 #[main]
 fn main() -> ! {
@@ -261,10 +274,33 @@ fn main() -> ! {
     const BALL_RADIUS: i32 = 8;
     let mut position: (f32, f32) = (120.0, 60.0);
     let mut velocity: (f32, f32) = (2.5, 2.0);
+    let mut input = Input::new();
+    let mut now_ms: u32 = 0;
 
     loop {
+        now_ms = now_ms.wrapping_add(33);
         canvas.clear(palette::BLACK);
         draw_demo_scene(&mut canvas);
+
+        // Buttons on expander port 0 read low while pressed, so the set of
+        // pressed bits is the inverse of the raw port byte.
+        let port0 = read_expander_register(&mut i2c, expander, REG_INPUT_0);
+        let active_mask = !port0;
+        input.update(active_mask, now_ms);
+        if input.just_pressed(Button::Btn1) {
+            writeln!(serial, "button 1 pressed").ok();
+        }
+        let ball_color = if input.pressed(Button::Btn1) {
+            palette::RED
+        } else if input.pressed(Button::Btn2) {
+            palette::GREEN
+        } else if input.pressed(Button::Btn3) {
+            palette::BLUE
+        } else if input.pressed(Button::Btn4) {
+            palette::YELLOW
+        } else {
+            palette::WHITE
+        };
 
         let relative_x = position.0 - CENTRE.0;
         let relative_y = position.1 - CENTRE.1;
@@ -286,7 +322,7 @@ fn main() -> ! {
             position.0 as i32,
             position.1 as i32,
             BALL_RADIUS,
-            palette::WHITE,
+            ball_color,
         );
 
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
