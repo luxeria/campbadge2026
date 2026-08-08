@@ -159,6 +159,7 @@ impl Game {
         }
         if dice_score(&self.dice[..self.dice_count]) == 0 {
             self.turn_score = 0;
+            self.dice_count = DICE_COUNT; // fresh five for the next player
             self.advance_turn();
             false
         } else {
@@ -315,6 +316,30 @@ mod tests {
         assert_eq!(gained, 1050); // three ones (1000) + one five (50)
         assert_eq!(game.turn_score(), 1050);
         assert_eq!(game.dice_count(), 1); // only the 2 remains
+    }
+
+    #[test]
+    fn farkle_resets_dice_count_for_next_player() {
+        let mut game = Game::new();
+        game.dice = [1, 1, 1, 5, 2];
+        game.dice_count = 5;
+        game.score_selected(&[0, 1, 2, 3]).unwrap();
+        assert_eq!(game.dice_count(), 1);
+
+        // A single leftover die that rolls a non-scorable face farkles.
+        let mut seed = 1u32;
+        loop {
+            let mut probe = Prng::new(seed);
+            let value = 1 + probe.next_range(6);
+            if value != 1 && value != 5 {
+                break;
+            }
+            seed += 1;
+        }
+        assert!(!game.throw(&mut Prng::new(seed)));
+
+        // The next player starts from a full five dice, not the leftover one.
+        assert_eq!(game.dice_count(), DICE_COUNT);
     }
 
     #[test]

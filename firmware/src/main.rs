@@ -60,6 +60,33 @@ fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
     let _ = tx.flush_tx_nb();
 }
 
+/// Maps a zero-based button index to its [`Button`] variant.
+fn button_at(index: usize) -> Button {
+    match index {
+        1 => Button::Btn2,
+        2 => Button::Btn3,
+        3 => Button::Btn4,
+        4 => Button::Btn5,
+        5 => Button::Btn6,
+        6 => Button::Btn7,
+        7 => Button::Btn8,
+        _ => Button::Btn1,
+    }
+}
+
+/// Logs a freshly pressed button by name and hex mask, e.g. `btn1 0x01`.
+fn log_button_press(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, index: usize) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut buffer = *b"btn0 0x00\n";
+    buffer[3] = b'0' + (index as u8 + 1);
+    let bit = 1u8 << index;
+    buffer[7] = HEX[(bit >> 4) as usize];
+    buffer[8] = HEX[(bit & 0x0f) as usize];
+    if let Ok(text) = core::str::from_utf8(&buffer[..10]) {
+        log_line(tx, text);
+    }
+}
+
 /// Sends a single command byte to the panel.
 fn send_command(spi: &mut Spi<'_, esp_hal::Blocking>, dc: &mut Output, cs: &mut Output, command: u8) {
     cs.set_low();
@@ -198,8 +225,8 @@ fn read_expander_register(
     value[0]
 }
 
-/// Draws a decimal number centred around the given horizontal point.
-fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color) {
+/// Draws a decimal number centred around the given horizontal point, at a scale.
+fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color, scale: i32) {
     let mut buffer = [0u8; 8];
     let mut n = 0;
     if value == 0 {
@@ -214,8 +241,8 @@ fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color) {
     }
     buffer[..n].reverse();
     if let Ok(text) = core::str::from_utf8(&buffer[..n]) {
-        let text_width = canvas.measure_text(text, 1);
-        canvas.draw_text(text, x - text_width / 2, y, 1, color);
+        let text_width = canvas.measure_text(text, scale);
+        canvas.draw_text(text, x - text_width / 2, y, scale, color);
     }
 }
 
@@ -223,6 +250,16 @@ fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color) {
 fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
     let text_width = canvas.measure_text(text, 1);
     canvas.draw_text(text, 120 - text_width / 2, y, 1, color);
+}
+
+/// Draws a short `P<n>` player label centred on the given point.
+fn draw_pn(canvas: &mut Canvas, x: i32, y: i32, player: usize, color: Color) {
+    let mut buffer = *b"P0";
+    buffer[1] = b'0' + player as u8;
+    if let Ok(text) = core::str::from_utf8(&buffer) {
+        let text_width = canvas.measure_text(text, 1);
+        canvas.draw_text(text, x - text_width / 2, y, 1, color);
+    }
 }
 
 /// Horizontal centre of the `i`-th die in a row of `count`.
@@ -276,7 +313,7 @@ enum Phase {
     TurnOver,
 }
 
-/// Animates `final_values` tumbling and settling over a short sequence.
+/// Animates `final_values` tumbling chaotically before settling into their slots.
 fn animate_roll(
     canvas: &mut Canvas,
     spi: &mut Spi<'_, esp_hal::Blocking>,
@@ -286,23 +323,44 @@ fn animate_roll(
     final_values: &[u8],
     rng: &mut Prng,
 ) {
-    const FRAMES: i32 = 9;
+    const FRAMES: i32 = 13;
+    const SETTLE_Y: i32 = 112;
+    let count = final_values.len().min(DICE_COUNT);
+
+    // Scatter the dice across the upper play area.
+    let mut px = [0i32; DICE_COUNT];
+    let mut py = [0i32; DICE_COUNT];
+    for index in 0..count {
+        px[index] = 40 + rng.next_range(170) as i32;
+        py[index] = 25 + rng.next_range(100) as i32;
+    }
+
     for frame in 0..FRAMES {
         let progress = frame as f32 / (FRAMES - 1) as f32;
-        let scale = 1.7 - 0.7 * progress;
-        // Dice fall from slightly above and settle onto the row while shrinking.
-        let settle = (1.0 - progress) * 18.0;
         canvas.clear(slso8::NAVY);
-        for (index, &value) in final_values.iter().enumerate() {
-            let shown = if frame < FRAMES - 1 {
+
+        // Bounce around for a while, then ease into the landing slots.
+        for index in 0..count {
+            if progress < 0.72 {
+                let dx = (rng.next_range(48) as i32) - 24;
+                let dy = (rng.next_range(40) as i32) - 20;
+                px[index] = (px[index] + dx).clamp(24, 214);
+                py[index] = (py[index] + dy).clamp(16, 150);
+            } else {
+                let slot_x = die_slot(count, index);
+                px[index] = px[index] + ((slot_x - px[index]) * 3) / 5;
+                py[index] = py[index] + ((SETTLE_Y - py[index]) * 3) / 5;
+            }
+
+            let shown = if progress < 0.9 {
                 1 + rng.next_range(6) as u8
             } else {
-                value
+                final_values[index]
             };
-            let size = (DIE as f32 * scale) as i32;
-            let cy = 104 + settle as i32;
-            draw_die(canvas, die_slot(final_values.len(), index), cy, size, shown);
+            let size = if progress < 0.5 { DIE + 8 } else { DIE };
+            draw_die(canvas, px[index], py[index], size, shown);
         }
+
         flush_screen(spi, dc, cs, canvas.as_slice());
         delay.delay_millis(33);
     }
@@ -374,6 +432,9 @@ fn main() -> ! {
     let mut marked = [false; DICE_COUNT];
     let mut phase = Phase::AwaitRoll;
     let mut bad_frames: u32 = 0;
+    let mut last_banker: usize = 0;
+    let mut last_banked: u32 = 0;
+    let mut last_farkle: bool = false;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -382,12 +443,22 @@ fn main() -> ! {
         let active_mask = !port0;
         input.update(active_mask, now_ms);
 
+        // Diagnostic: log every freshly pressed button by name and mask.
+        if input.any_just_pressed() {
+            for index in 0..8 {
+                if input.just_pressed(button_at(index)) {
+                    log_button_press(&mut tx, index);
+                }
+            }
+        }
+
         let in_play = game.dice_count();
 
         // --- Input handling per phase ---
         match phase {
             Phase::AwaitRoll => {
                 if input.just_pressed(Button::Btn6) {
+                    let turn_player = game.current_player();
                     let thrown = game.dice_count();
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
@@ -398,6 +469,10 @@ fn main() -> ! {
                     );
                     selector = 0;
                     marked = [false; DICE_COUNT];
+                    if !scorable {
+                        last_farkle = true;
+                        last_banker = turn_player;
+                    }
                     phase = if scorable { Phase::Select } else { Phase::TurnOver };
                 }
             }
@@ -408,10 +483,10 @@ fn main() -> ! {
                 if input.just_pressed(Button::Btn3) {
                     selector = (selector + 1) % in_play;
                 }
-                if input.just_pressed(Button::Btn7) {
+                if input.just_pressed(Button::Btn2) {
                     marked[selector] = !marked[selector];
                 }
-                if input.just_pressed(Button::Btn5) {
+                if input.just_pressed(Button::Btn4) {
                     let mut chosen = [0usize; DICE_COUNT];
                     let mut count = 0;
                     for index in 0..in_play {
@@ -434,6 +509,7 @@ fn main() -> ! {
                     }
                 }
                 if input.just_pressed(Button::Btn6) {
+                    let turn_player = game.current_player();
                     let thrown = game.dice_count();
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
@@ -444,9 +520,16 @@ fn main() -> ! {
                     );
                     selector = 0;
                     marked = [false; DICE_COUNT];
+                    if !scorable {
+                        last_farkle = true;
+                        last_banker = turn_player;
+                    }
                     phase = if scorable { Phase::Select } else { Phase::TurnOver };
                 }
                 if input.just_pressed(Button::Btn8) {
+                    last_banker = game.current_player();
+                    last_banked = game.turn_score();
+                    last_farkle = false;
                     game.bank();
                     phase = Phase::TurnOver;
                 }
@@ -467,32 +550,45 @@ fn main() -> ! {
         // --- Render ---
         canvas.clear(slso8::NAVY);
 
-        canvas.draw_text("P0", 8, 5, 1, slso8::ORANGE);
-        draw_number(&mut canvas, 32, 5, game.score(0), slso8::CREAM);
-        canvas.draw_text("P1", 200, 5, 1, slso8::ORANGE);
-        draw_number(&mut canvas, 224, 5, game.score(1), slso8::CREAM);
-        canvas.draw_text("TURN", 86, 5, 1, slso8::PEACH);
-        draw_number(&mut canvas, 118, 5, game.turn_score(), slso8::CREAM);
+        // Both players' banked totals, active one lit orange + underlined.
+        let current_player = game.current_player();
+        let active = slso8::ORANGE;
+        let idle = slso8::MAUVE;
+        canvas.draw_text("P0", 8, 4, 1, if current_player == 0 { active } else { idle });
+        draw_number(&mut canvas, 34, 4, game.score(0), slso8::CREAM, 1);
+        canvas.draw_text("P1", 188, 4, 1, if current_player == 1 { active } else { idle });
+        draw_number(&mut canvas, 214, 4, game.score(1), slso8::CREAM, 1);
+        let active_x = if current_player == 0 { 8 } else { 188 };
+        canvas.rect(active_x, 14, 24, 2, slso8::ORANGE);
+
+        // The turn's accounting sits above the dice row, out of the way.
+        draw_centered(&mut canvas, 18, "TURN", slso8::PEACH);
+        draw_number(&mut canvas, 120, 26, game.turn_score(), slso8::CREAM, 1);
 
         let dice = game.dice();
         let count = dice.len();
         match phase {
             Phase::Select => {
+                // All dice share one centre so the active die grows in place
+                // instead of shifting upward when it gets larger.
+                const CENTER_Y: i32 = 106;
                 for index in 0..count {
                     let x = die_slot(count, index);
                     let selected = index == selector;
-                    let size = if selected { DIE + 8 } else { DIE };
-                    let cy = 104 - if selected { 6 } else { 0 };
-                    draw_die(&mut canvas, x, cy, size, dice[index]);
-                    if marked[index] {
-                        draw_centered(&mut canvas, cy + size / 2 + 6, "*", slso8::ORANGE);
-                    }
-                    if selected {
-                        canvas.rect(
-                            x - size / 2 - 2,
-                            cy - size / 2 - 2,
-                            size + 4,
-                            size + 4,
+                    let marked_die = marked[index];
+                    let size = if selected {
+                        DIE + 10
+                    } else if marked_die {
+                        DIE + 4
+                    } else {
+                        DIE - 8
+                    };
+                    draw_die(&mut canvas, x, CENTER_Y, size, dice[index]);
+                    if marked_die {
+                        draw_centered(
+                            &mut canvas,
+                            CENTER_Y + size / 2 + 6,
+                            "*",
                             slso8::ORANGE,
                         );
                     }
@@ -513,11 +609,18 @@ fn main() -> ! {
                     draw_centered(&mut canvas, 186, "ROLL (B6)", slso8::CREAM);
                 }
                 Phase::Select => {
-                    draw_centered(&mut canvas, 172, "MARK B7 . SCORE B5", slso8::PEACH);
+                    draw_centered(&mut canvas, 172, "MARK B2 . SCORE B4", slso8::PEACH);
                     draw_centered(&mut canvas, 184, "ROLL B6 . BANK B8", slso8::PEACH);
                 }
                 Phase::TurnOver => {
-                    draw_centered(&mut canvas, 176, "TURN OVER - B8", slso8::CREAM);
+                    if last_farkle {
+                        draw_centered(&mut canvas, 136, "FARKLE!", slso8::BURNT);
+                    } else {
+                        draw_number(&mut canvas, 120, 128, last_banked, slso8::CREAM, 2);
+                    }
+                    draw_pn(&mut canvas, 120, 150, last_banker, slso8::ORANGE);
+                    draw_number(&mut canvas, 120, 160, game.score(last_banker), slso8::CREAM, 1);
+                    draw_centered(&mut canvas, 184, "NEXT - B8", slso8::CREAM);
                 }
             }
         }
