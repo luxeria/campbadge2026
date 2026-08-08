@@ -20,10 +20,11 @@ use esp_hal::time::Rate;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagTx};
 
 use raylib_camp::canvas::{Canvas, display};
-use raylib_camp::color::palette;
+use raylib_camp::color::{Color, palette};
 use raylib_camp::input::{Button, Input};
+use raylib_camp::rand::Prng;
 
-use games::snake::{CELL, Direction, GRID, ORIGIN_X, ORIGIN_Y, Snake, StepResult, pastel};
+use games::sevens::{Card, Game, PlayOutcome, Suit, SUITS, PLAYER_COUNT, MAX_HAND};
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -248,24 +249,176 @@ fn read_expander_register(
     value[0]
 }
 
-/// Draws a small score numeral near the bottom of the round panel.
-fn draw_score(canvas: &mut Canvas, score: usize) {
+/// Sorts a slice of cards by suit, then by descending rank within each suit
+/// (all suits grouped together, each fanned from its highest card down).
+fn sort_cards(cards: &mut [Card]) {
+    let comes_after = |a: Card, b: Card| -> bool {
+        a.suit.index() > b.suit.index()
+            || (a.suit.index() == b.suit.index() && a.rank < b.rank)
+    };
+    for index in 1..cards.len() {
+        let mut cursor = index;
+        while cursor > 0 && comes_after(cards[cursor - 1], cards[cursor]) {
+            cards.swap(cursor - 1, cursor);
+            cursor -= 1;
+        }
+    }
+}
+
+/// Appends a card's compact rank+suit label (e.g. `"8H"`) into a stack buffer.
+fn card_label(card: Card, out: &mut [u8; 3]) -> &str {
+    let rank = card.rank_label().as_bytes();
+    let suit = card.suit.label().as_bytes();
+    let mut count = 0;
+    for &byte in rank {
+        if count < 2 {
+            out[count] = byte;
+            count += 1;
+        }
+    }
+    out[count] = suit[0];
+    count += 1;
+    core::str::from_utf8(&out[..count]).unwrap_or("?")
+}
+
+/// Draws a small card face with an optional highlight (the selected rack card).
+fn draw_card(canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, card: Card, selected: bool) {
+    let background = if selected { palette::YELLOW } else { palette::WHITE };
+    canvas.rect_filled(x, y, w, h, background);
+    canvas.rect(x, y, w, h, palette::GREY);
+    let face_color = if card.suit == Suit::Hearts || card.suit == Suit::Diamonds {
+        palette::RED
+    } else {
+        palette::BLACK
+    };
+    let mut label = [0u8; 3];
+    let text = card_label(card, &mut label);
+    let text_width = canvas.measure_text(text, 1);
+    canvas.draw_text(text, x + (w - text_width) / 2, y + 1, 1, face_color);
+}
+
+/// Draws a decimal number centred around the given horizontal point.
+fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color) {
     let mut buffer = [0u8; 8];
-    let mut value = score;
-    let mut length = 0;
+    let mut n = 0;
     if value == 0 {
-        buffer[0] = b'0';
-        length = 1;
+        buffer[n] = b'0';
+        n += 1;
     }
-    while value > 0 && length < buffer.len() {
-        buffer[length] = b'0' + (value % 10) as u8;
-        value /= 10;
-        length += 1;
+    let mut v = value;
+    while v > 0 && n < buffer.len() {
+        buffer[n] = b'0' + (v % 10) as u8;
+        v /= 10;
+        n += 1;
     }
-    buffer[..length].reverse();
-    let text = core::str::from_utf8(&buffer[..length]).unwrap_or("0");
-    let width = canvas.measure_text(text, 2);
-    canvas.draw_text(text, 120 - width / 2, 210, 2, palette::WHITE);
+    buffer[..n].reverse();
+    if let Ok(text) = core::str::from_utf8(&buffer[..n]) {
+        let text_width = canvas.measure_text(text, 1);
+        canvas.draw_text(text, x - text_width / 2, y, 1, color);
+    }
+}
+
+/// Centred one-line helper label.
+fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
+    let text_width = canvas.measure_text(text, 1);
+    canvas.draw_text(text, 120 - text_width / 2, y, 1, color);
+}
+
+/// Draws the four suited piles in a row across the middle of the round panel.
+fn draw_board(canvas: &mut Canvas, game: &Game) {
+    const PILE_W: i32 = 46;
+    const PILE_H: i32 = 34;
+    let start_x = (240 - ((4 * PILE_W) + (3 * 8))) / 2;
+    for (index, suit) in SUITS.iter().enumerate() {
+        let x = start_x + index as i32 * (PILE_W + 8);
+        match game.pile_state(index) {
+            Some((low, high)) => {
+                canvas.rect_filled(x, 96, PILE_W, PILE_H, palette::WHITE);
+                canvas.rect(x, 96, PILE_W, PILE_H, palette::GREY);
+                canvas.draw_text(suit.label(), x + 2, 97, 1, palette::BLACK);
+                let mut range = [0u8; 7];
+                let range_text = range_label(low, high, &mut range);
+                let rw = canvas.measure_text(range_text, 1);
+                canvas.draw_text(range_text, x + (PILE_W - rw) / 2, 114, 1, palette::BLACK);
+            }
+            None => {
+                canvas.rect_filled(x, 96, PILE_W, PILE_H, palette::GREY);
+                canvas.draw_text(suit.label(), x + 2, 97, 1, palette::WHITE);
+            }
+        }
+    }
+}
+
+/// Renders the three opponent card-back stacks on the other sides of the table.
+fn draw_opponents(canvas: &mut Canvas, game: &Game, current: usize) {
+    let right = (current + 1) % PLAYER_COUNT;
+    let top = (current + 2) % PLAYER_COUNT;
+    let left = (current + 3) % PLAYER_COUNT;
+
+    draw_opponent(canvas, 116, 6, game.hand(top).len());
+    draw_opponent(canvas, 6, 120, game.hand(left).len());
+    draw_opponent(canvas, 220, 120, game.hand(right).len());
+}
+
+fn draw_opponent(canvas: &mut Canvas, x: i32, y: i32, count: usize) {
+    canvas.rect_filled(x, y, 11, 15, palette::BLUE);
+    canvas.rect(x, y, 11, 15, palette::GREY);
+    draw_number(canvas, x + 20, y + 2, count as u32, palette::WHITE);
+}
+
+/// Draws the current player's hand rack at the bottom plus the status line.
+fn draw_hand_rack(canvas: &mut Canvas, cards: &[Card], cursor: usize, game: &Game) {
+    let count = cards.len();
+    if count > 0 {
+        let card_w = (228 / count as i32).clamp(8, 22);
+        let start_x = (240 - count as i32 * card_w) / 2;
+        const BASE_Y: i32 = 212;
+        for (index, card) in cards.iter().enumerate() {
+            // The selected card is raised so it reads as the active choice.
+            let y = if index == cursor { BASE_Y - 6 } else { BASE_Y };
+            draw_card(canvas, start_x + index as i32 * card_w, y, card_w - 1, 26, *card, index == cursor);
+        }
+    }
+
+    if game.round_over() {
+        if game.game_over() {
+            draw_centered(canvas, 150, "GAME OVER", palette::RED);
+        } else {
+            draw_centered(canvas, 150, "ROUND OVER - B8", palette::RED);
+        }
+    } else if game.current_must_draw() {
+        draw_centered(canvas, 196, "No move - press B6", palette::ORANGE);
+    }
+}
+
+/// Builds a `low-high` range label such as `"6-K"`.
+fn range_label(low: u8, high: u8, out: &mut [u8; 7]) -> &str {
+    let mut count = 0;
+    for &byte in rank_label(low).as_bytes() {
+        out[count] = byte;
+        count += 1;
+    }
+    out[count] = b'-';
+    count += 1;
+    for &byte in rank_label(high).as_bytes() {
+        out[count] = byte;
+        count += 1;
+    }
+    core::str::from_utf8(&out[..count]).unwrap_or("")
+}
+
+/// Short label for a rank value (Ace..King).
+fn rank_label(rank: u8) -> &'static str {
+    match rank {
+        1 => "A",
+        11 => "J",
+        12 => "Q",
+        13 => "K",
+        value => {
+            const DIGITS: [&str; 9] = ["2", "3", "4", "5", "6", "7", "8", "9", "10"];
+            DIGITS[(value - 2) as usize]
+        }
+    }
 }
 
 /// Application entry point.
@@ -329,70 +482,84 @@ fn main() -> ! {
     init_display(&mut spi, &mut dc, &mut cs, &mut delay);
     log_line(&mut tx, "display initialised\n");
 
-    // --- Snake game from the `games` crate ---
+    // --- Sevens game, rotating hot-seat mode ---
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
-    log_line(&mut tx, "snake starting\n");
+    log_line(&mut tx, "sevens starting\n");
 
+    let mut rng = Prng::new(0x53e7);
+    let mut game = Game::new(&mut rng);
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
-    let mut tick_accum: u32 = 0;
-    const BASE_TICK_MS: u32 = 180;
-    const MIN_TICK_MS: u32 = 45;
-    let mut snake = Snake::new(0x5eed);
-    let mut game_over = false;
+    let mut hand_cursor: usize = 0;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
 
-        // Buttons on expander port 0 read low while pressed; invert the byte.
         let port0 = read_expander_register(&mut i2c, expander, REG_INPUT_0);
         let active_mask = !port0;
         input.update(active_mask, now_ms);
 
-        // Physical layout on this badge: up = Btn2, right = Btn3.
-        if input.just_pressed(Button::Btn1) {
-            snake.set_direction(Direction::Left);
-        } else if input.just_pressed(Button::Btn2) {
-            snake.set_direction(Direction::Up);
-        } else if input.just_pressed(Button::Btn3) {
-            snake.set_direction(Direction::Right);
-        } else if input.just_pressed(Button::Btn4) {
-            snake.set_direction(Direction::Down);
+        let current = game.current_player();
+        // Ordered copy of the current player's hand for the bottom rack.
+        let mut hand_cards = [Card::new(Suit::Spades, 1).unwrap(); MAX_HAND];
+        let mut hand_len = 0;
+        for card in game.hand(current).iter() {
+            hand_cards[hand_len] = card;
+            hand_len += 1;
         }
-        if game_over && input.just_pressed(Button::Btn8) {
-            snake = Snake::new(now_ms);
-            game_over = false;
-            tick_accum = 0; // drop the time piled up on the game-over screen
+        sort_cards(&mut hand_cards[..hand_len]);
+        if hand_cursor >= hand_len {
+            hand_cursor = hand_len.saturating_sub(1);
         }
 
-        // The snake quickens as it grows, never below the floor; holding
-        // Btn5 multiplies the speed fourfold while pressed.
-        let mut tick_ms = BASE_TICK_MS
-            .saturating_sub(snake.score() as u32 * 16)
-            .max(MIN_TICK_MS);
-        if !game_over && input.pressed(Button::Btn5) {
-            tick_ms /= 4;
-        }
-        tick_accum += 33;
-        if !game_over && tick_accum >= tick_ms {
-            tick_accum -= tick_ms;
-            if snake.update() == StepResult::Died {
-                game_over = true;
+        if !game.round_over() && !game.game_over() {
+            // Move the cursor across the hand rack (left/right).
+            if input.just_pressed(Button::Btn1) {
+                hand_cursor = (hand_cursor + hand_len - 1) % hand_len.max(1);
             }
+            if input.just_pressed(Button::Btn3) {
+                hand_cursor = (hand_cursor + 1) % hand_len.max(1);
+            }
+
+            // Play the selected card (Btn5 or Btn7).
+            if input.just_pressed(Button::Btn5) || input.just_pressed(Button::Btn7) {
+                let selection = hand_cards
+                    .get(hand_cursor.min(hand_len.saturating_sub(1)))
+                    .copied();
+                if let Some(card) = selection {
+                    match game.play(card) {
+                        Ok(PlayOutcome::Played) => {
+                            log_line(&mut tx, "played\n");
+                            hand_cursor = 0;
+                        }
+                        Ok(PlayOutcome::RoundFinished) => log_line(&mut tx, "round finished\n"),
+                        Err(_) => log_line(&mut tx, "illegal\n"),
+                    }
+                }
+            }
+
+            // Pass / draw (Btn6): draw one card from each opponent and skip the
+            // turn, whether stuck or choosing to hold back.
+            if input.just_pressed(Button::Btn6) {
+                game.draw_from_others(&mut rng);
+                hand_cursor = 0;
+            }
+        } else if input.just_pressed(Button::Btn8) {
+            // Next round, or a brand-new game after reaching 250 points.
+            if game.game_over() {
+                game = Game::new(&mut rng);
+            } else {
+                game.next_round(&mut rng);
+            }
+            hand_cursor = 0;
         }
 
+        // --- Render the rotating table, current player always at the bottom. ---
         canvas.clear(palette::BLACK);
-        // Leave the surround black and fill the playfield in a pastel brown-grey.
-        canvas.rect_filled(ORIGIN_X, ORIGIN_Y, GRID * CELL, GRID * CELL, pastel::BACKGROUND);
-        canvas.rect(ORIGIN_X, ORIGIN_Y, GRID * CELL, GRID * CELL, palette::BLACK);
-        if game_over {
-            canvas.draw_text("GAME OVER", 76, 100, 2, pastel::BODY);
-            draw_score(&mut canvas, snake.score());
-        } else {
-            snake.draw(&mut canvas);
-            draw_score(&mut canvas, snake.score());
-        }
+        draw_board(&mut canvas, &game);
+        draw_opponents(&mut canvas, &game, current);
+        draw_hand_rack(&mut canvas, &hand_cards[..hand_len], hand_cursor, &game);
 
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
         delay.delay_millis(33);

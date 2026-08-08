@@ -4,4 +4,5 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(missing_docs)]
 
+pub mod sevens;
 pub mod snake;
