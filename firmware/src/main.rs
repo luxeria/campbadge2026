@@ -23,7 +23,7 @@ use raylib_camp::canvas::{Canvas, display};
 use raylib_camp::color::palette;
 use raylib_camp::input::{Button, Input};
 
-use games::snake::{Direction, Snake, StepResult};
+use games::snake::{CELL, Direction, GRID, ORIGIN_X, ORIGIN_Y, Snake, StepResult, pastel};
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -264,7 +264,8 @@ fn draw_score(canvas: &mut Canvas, score: usize) {
     }
     buffer[..length].reverse();
     let text = core::str::from_utf8(&buffer[..length]).unwrap_or("0");
-    canvas.draw_text(text, 108, 218, 1, palette::WHITE);
+    let width = canvas.measure_text(text, 2);
+    canvas.draw_text(text, 120 - width / 2, 210, 2, palette::WHITE);
 }
 
 /// Application entry point.
@@ -336,7 +337,7 @@ fn main() -> ! {
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
     let mut tick_accum: u32 = 0;
-    const BASE_TICK_MS: u32 = 220;
+    const BASE_TICK_MS: u32 = 180;
     const MIN_TICK_MS: u32 = 45;
     let mut snake = Snake::new(0x5eed);
     let mut game_over = false;
@@ -362,12 +363,17 @@ fn main() -> ! {
         if game_over && input.just_pressed(Button::Btn8) {
             snake = Snake::new(now_ms);
             game_over = false;
+            tick_accum = 0; // drop the time piled up on the game-over screen
         }
 
-        // The snake quickens as it grows, never below the floor.
-        let tick_ms = BASE_TICK_MS
-            .saturating_sub(snake.score() as u32 * 12)
+        // The snake quickens as it grows, never below the floor; holding
+        // Btn5 multiplies the speed fourfold while pressed.
+        let mut tick_ms = BASE_TICK_MS
+            .saturating_sub(snake.score() as u32 * 16)
             .max(MIN_TICK_MS);
+        if !game_over && input.pressed(Button::Btn5) {
+            tick_ms /= 4;
+        }
         tick_accum += 33;
         if !game_over && tick_accum >= tick_ms {
             tick_accum -= tick_ms;
@@ -377,8 +383,11 @@ fn main() -> ! {
         }
 
         canvas.clear(palette::BLACK);
+        // Leave the surround black and fill the playfield in a pastel brown-grey.
+        canvas.rect_filled(ORIGIN_X, ORIGIN_Y, GRID * CELL, GRID * CELL, pastel::BACKGROUND);
+        canvas.rect(ORIGIN_X, ORIGIN_Y, GRID * CELL, GRID * CELL, palette::BLACK);
         if game_over {
-            canvas.draw_text("GAME OVER", 76, 100, 2, palette::RED);
+            canvas.draw_text("GAME OVER", 76, 100, 2, pastel::BODY);
             draw_score(&mut canvas, snake.score());
         } else {
             snake.draw(&mut canvas);
