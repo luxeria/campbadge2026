@@ -1,0 +1,16 @@
+[target.'cfg(target_arch = "xtensa")']
+runner    = "espflash flash --monitor"
+rustflags = [
+  # GNU LD linker script + args required by esp-hal on Xtensa.
+  "-C", "link-arg=-Wl,-Tlinkall.x",
+  "-C", "link-arg=-nostartfiles",
+]
+
+[env]
+ESP_LOG = "info"
+
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["core", "alloc"]
