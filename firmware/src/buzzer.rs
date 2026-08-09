@@ -31,17 +31,38 @@ const BEEP_DUTY_PCT: u8 = 10;
 /// Startup chirp: two short C6 beeps with a silence between them.
 const STARTUP_NOTES: [(u32, u32); 3] = [(1047, 100), (0, 70), (1047, 100)];
 /// Farkle jingle: three descending notes, the last held a little longer.
-const FARKLE_NOTES: [(u32, u32); 3] = [(523, 135), (440, 135), (349, 350)];
-/// Hot-dice arpeggio: three quick ascending notes, shorter than the held
-/// melody before it.
-const HOT_DICE_NOTES: [(u32, u32); 3] = [(349, 70), (440, 70), (523, 90)];
+const FARKLE_NOTES: [(u32, u32); 3] = [(523, 95), (440, 95), (349, 240)];
+/// All-five roll-over: a swift upward sweep spanning about five octaves.
+///
+/// The sweep stays above roughly 300 Hz because the LEDC timer's divisor caps
+/// out below that (80 MHz APB clock at 8-bit duty), which would fail to
+/// configure.
+const HOT_DICE_NOTES: [(u32, u32); 12] = [
+    (340, 12),
+    (466, 12),
+    (638, 12),
+    (874, 12),
+    (1197, 12),
+    (1640, 12),
+    (2247, 12),
+    (3078, 12),
+    (4217, 12),
+    (5777, 12),
+    (7914, 12),
+    (10842, 12),
+];
 /// Win fanfare: a bright rising "ta-daaaah" with the final note held.
 const WIN_NOTES: [(u32, u32); 2] = [(784, 150), (1047, 460)];
 /// B6 roll blip: a single very short note so rolls stay a quiet click (used
 /// for both a fresh throw and re-rolling the leftovers).
-const ROLL_NOTES: [(u32, u32); 1] = [(523, 30)];
-/// Bank milestone: a pleasant rising note when a large turn is banked.
-const BIG_BANK_NOTES: [(u32, u32); 2] = [(659, 90), (1047, 150)];
+const ROLL_NOTES: [(u32, u32); 1] = [(220, 30)];
+/// Score-milestone arpeggio: the quick ascending notes for a scoring action
+/// that nets over 1000 points.
+const ARPEGGIO_NOTES: [(u32, u32); 3] = [(349, 70), (440, 70), (523, 90)];
+/// Invalid-selection buzz: a single low, short note that flags a rejected pick.
+const INVALID_NOTES: [(u32, u32); 1] = [(160, 90)];
+/// Scoring blip when under 1000: a very short "dup-dap", the dap a step up.
+const DUPDAP_NOTES: [(u32, u32); 2] = [(440, 35), (659, 40)];
 
 /// Plays the startup chirp, also used when the game is reset by triple-BTN7.
 pub fn play_startup(ledc: &Ledc<'_>, delay: &mut Delay) {
@@ -86,9 +107,19 @@ pub fn play_handoff(ledc: &Ledc<'_>, delay: &mut Delay, player: usize) {
     play_notes(ledc, delay, notes);
 }
 
-/// Plays the rising note that celebrates banking a large turn.
-pub fn play_big_bank(ledc: &Ledc<'_>, delay: &mut Delay) {
-    play_notes(ledc, delay, &BIG_BANK_NOTES);
+/// Plays the quick ascending arpeggio when a scoring action nets over 1000.
+pub fn play_arpeggio(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &ARPEGGIO_NOTES);
+}
+
+/// Plays the low, short buzz that flags an invalid dice selection.
+pub fn play_invalid(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &INVALID_NOTES);
+}
+
+/// Plays the very short "dup-dap" that confirms a sub-1000 score.
+pub fn play_dupdap(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &DUPDAP_NOTES);
 }
 
 /// Drives the buzzer through a short sequence of `(frequency, duration_ms)`.
@@ -110,7 +141,11 @@ fn play_notes(ledc: &Ledc<'_>, delay: &mut Delay, notes: &[(u32, u32)]) {
         let mut timer = ledc.timer::<LowSpeed>(TimerNumber::Timer0);
         timer
             .configure(TimerConfig {
-                duty: Duty::Duty8Bit,
+                // 10-bit duty keeps the timer's minimum usable frequency low
+                // (about 76 Hz on the 80 MHz APB clock) so deep bleeps such as
+                // the 220 Hz roll click stay in range; 8-bit would cap around
+                // 305 Hz.
+                duty: Duty::Duty10Bit,
                 clock_source: LSClockSource::APBClk,
                 frequency: Rate::from_hz(frequency),
             })

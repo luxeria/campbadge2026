@@ -61,6 +61,10 @@ static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
 
 /// Side length of a settled die in pixels.
 const DIE: i32 = 38;
+/// Extra pixels a selected (cursor) die grows past the base size.
+const SELECTED_DIE_EXTRA: i32 = 8;
+/// Extra pixels a plain idle die shrinks below the base size.
+const IDLE_DIE_SHRINK: i32 = 8;
 /// Horizontal spacing between dice slots.
 const SLOT_SPACING: i32 = 46;
 /// Softest step of the die face's bottom shading gradient.
@@ -80,8 +84,8 @@ const HELP_SCALE: f32 = 1.5;
 const HELP_LETTER_SPACING: i32 = 2;
 /// Extra empty pixels between digits in scores and other numbers.
 const NUMBER_SPACING: i32 = 2;
-/// A banked turn score at or above this marks a milestone worth a rising note.
-const BIG_BANK_THRESHOLD: u32 = 1500;
+/// A single scoring action netting more than this plays the milestone arpeggio.
+const SCORE_ARPEGGIO_MIN: u32 = 1000;
 /// Scale of the big turn-indicator letter under the score.
 const ACTIVE_PLAYER_SCALE: i32 = 2;
 /// Button that toggles the on-screen button-hint text.
@@ -693,8 +697,6 @@ fn main() -> ! {
     // sound never freezes the animation leading up to it.
     let mut farkle_sound_pending: bool = false;
     let mut win_sound_pending: bool = false;
-    // Set when a big bank should sound on the BANKED screen.
-    let mut bank_pip_pending: bool = false;
     let mut last_farkle: bool = false;
     // Frames spent on the turn-over screen; drives the automatic hand-off after
     // a farkle so the player never has to "bank 0" to continue.
@@ -814,7 +816,6 @@ fn main() -> ! {
                     last_banked = game.turn_score();
                     last_farkle = false;
                     game.bank();
-                    bank_pip_pending = game.winner().is_none() && last_banked >= BIG_BANK_THRESHOLD;
                     phase = Phase::TurnOver;
                 }
             }
@@ -844,15 +845,19 @@ fn main() -> ! {
                         count += 1;
                     }
                     match game.score_selected(&chosen[..count]) {
-                        Ok(_) => {
+                        Ok(gained) => {
                             selector = 0;
                             marked = [false; DICE_COUNT];
                             scored_since_throw = true;
-                            // Clearing the last die in play is hot dice: hand
-                            // back to the rolling phase for a roll-again/bank
-                            // choice. The ascending jingle marks the feat.
+                            // Clearing the last die is hot dice (rising sweep);
+                            // a score over the milestone cues the arpeggio, and
+                            // any other score gives the quick dup-dap.
                             if count == in_play {
                                 buzzer::play_hot_dice(&ledc, &mut delay);
+                            } else if gained > SCORE_ARPEGGIO_MIN {
+                                buzzer::play_arpeggio(&ledc, &mut delay);
+                            } else {
+                                buzzer::play_dupdap(&ledc, &mut delay);
                             }
                             phase = if count == in_play {
                                 Phase::AwaitRoll
@@ -860,7 +865,10 @@ fn main() -> ! {
                                 Phase::Select
                             };
                         }
-                        Err(_) => bad_frames = 9, // invalid selection flash
+                        Err(_) => {
+                            bad_frames = 9; // invalid selection flash
+                            buzzer::play_invalid(&ledc, &mut delay);
+                        }
                     }
                 }
                 // Re-roll the leftover dice still in play (Btn6), which is only
@@ -911,7 +919,6 @@ fn main() -> ! {
                     last_banked = game.turn_score();
                     last_farkle = false;
                     game.bank();
-                    bank_pip_pending = game.winner().is_none() && last_banked >= BIG_BANK_THRESHOLD;
                     phase = Phase::TurnOver;
                 }
             }
@@ -1041,15 +1048,15 @@ fn main() -> ! {
                     let selected = index == selector;
                     let marked_die = marked[index];
                     let y = CENTER_Y - lift[index];
-                    // Marked dice shrink and sit above; the cursor die is
-                    // enlarged. Marking takes precedence so the change shows
-                    // immediately.
-                    let size = if marked_die {
+                    // The cursor die is enlarged even when it is also marked
+                    // for scoring; a marked die keeps its slight lift, applied
+                    // through the y offset above.
+                    let size = if selected {
+                        DIE + SELECTED_DIE_EXTRA
+                    } else if marked_die {
                         DIE
-                    } else if selected {
-                        DIE + 12
                     } else {
-                        DIE - 8
+                        DIE - IDLE_DIE_SHRINK
                     };
                     // Dies marked for scoring get a bright orange border.
                     let outline = if marked_die {
@@ -1194,10 +1201,6 @@ fn main() -> ! {
         if win_sound_pending {
             buzzer::play_win(&ledc, &mut delay);
             win_sound_pending = false;
-        }
-        if bank_pip_pending {
-            buzzer::play_big_bank(&ledc, &mut delay);
-            bank_pip_pending = false;
         }
 
         delay.delay_millis(33);
