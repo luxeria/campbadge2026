@@ -304,6 +304,19 @@ fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
     draw_centered_scaled(canvas, y, text, 1.0, 0, color);
 }
 
+/// Draws `text` centred horizontally at an integer `scale` with letter spacing.
+fn draw_centered_integer(
+    canvas: &mut Canvas,
+    y: i32,
+    text: &str,
+    scale: i32,
+    letter_spacing: i32,
+    color: Color,
+) {
+    let text_width = canvas.measure_text_spaced(text, scale, letter_spacing);
+    canvas.draw_text_spaced(text, 120 - text_width / 2, y, scale, letter_spacing, color);
+}
+
 /// Text colour marking a player's label.
 ///
 /// Player A is drawn green to match her bottom-left LED, player B keeps the
@@ -662,6 +675,9 @@ fn main() -> ! {
     let mut reset_press_count: u32 = 0;
     // Whose seat LED is lit; advances only when a finished turn hands over.
     let mut active_player: usize = 0;
+    // Whether at least one die was scored since the last throw; re-rolling the
+    // leftovers is only legal after a score on the current set.
+    let mut scored_since_throw: bool = false;
     // Whether the on-screen button hints are shown (toggled by holding B5).
     let mut help_visible: bool = false;
 
@@ -705,6 +721,7 @@ fn main() -> ! {
                 turnover_frames = 0;
                 last_farkle = false;
                 active_player = 0;
+                scored_since_throw = false;
                 phase = Phase::AwaitRoll;
                 log_line(&mut tx, "badge: game reset by BTN7 triple-press\n");
             }
@@ -716,6 +733,7 @@ fn main() -> ! {
                 if input.just_pressed(Button::Btn6) {
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
+                    scored_since_throw = false;
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
                     // Slice to the pre-throw count: on a farkle the game resets
@@ -793,6 +811,7 @@ fn main() -> ! {
                         Ok(_) => {
                             selector = 0;
                             marked = [false; DICE_COUNT];
+                            scored_since_throw = true;
                             // Hot dice: if every die in play was scored, the
                             // game has already reset to a fresh five, so hand
                             // back to the rolling phase for a roll-again/bank
@@ -807,10 +826,12 @@ fn main() -> ! {
                         Err(_) => bad_frames = 9, // invalid selection flash
                     }
                 }
-                // Re-roll the leftover dice still in play (Btn6).
-                if in_play < DICE_COUNT && input.just_pressed(Button::Btn6) {
+                // Re-roll the leftover dice still in play (Btn6), which is only
+                // legal after scoring at least one die from the current throw.
+                if scored_since_throw && input.just_pressed(Button::Btn6) {
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
+                    scored_since_throw = false;
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
                     // Slice to the pre-throw count: on a farkle the game resets
@@ -864,6 +885,7 @@ fn main() -> ! {
                     turnover_frames = 0;
                     last_farkle = false;
                     active_player = 0;
+                    scored_since_throw = false;
                     phase = Phase::AwaitRoll;
                 }
             }
@@ -1052,10 +1074,15 @@ fn main() -> ! {
                 }
                 Phase::TurnOver => {
                     if last_farkle {
-                        // Big, vertically-centred FARKLE!.
-                        let text = "FARKLE!";
-                        let text_width = canvas.measure_text(text, 3);
-                        canvas.draw_text(text, 120 - text_width / 2, 105, 3, slso8::BURNT);
+                        // Big, vertically-centred FARKLE!, using the spaced font.
+                        draw_centered_integer(
+                            &mut canvas,
+                            105,
+                            "FARKLE!",
+                            3,
+                            NUMBER_SPACING,
+                            slso8::BURNT,
+                        );
                     } else {
                         // "BANKED" label + amount, block vertically centred on
                         // the middle (120) of the 240-tall display; big font.
@@ -1090,9 +1117,14 @@ fn main() -> ! {
                 Phase::Winner => {
                     // Big "WINNER!", the champion, and their score.
                     let winner = game.winner().unwrap_or(0);
-                    let text = "WINNER!";
-                    let text_width = canvas.measure_text(text, 3);
-                    canvas.draw_text(text, 120 - text_width / 2, 100, 3, slso8::ORANGE);
+                    draw_centered_integer(
+                        &mut canvas,
+                        100,
+                        "WINNER!",
+                        3,
+                        NUMBER_SPACING,
+                        slso8::ORANGE,
+                    );
                     let color = player_color(winner, winner == last_banker);
                     draw_ledger(&mut canvas, 120, 150, winner, game.score(winner), 2, color);
                     if help_visible {
