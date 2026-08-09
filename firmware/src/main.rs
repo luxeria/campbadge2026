@@ -18,12 +18,12 @@ use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagTx};
 
-use raylib_camp::canvas::{Canvas, display};
+use raylib_camp::canvas::{display, Canvas};
 use raylib_camp::color::Color;
 use raylib_camp::input::{Button, Input};
 use raylib_camp::rand::Prng;
 
-use games::dice::{Game, DICE_COUNT, slso8};
+use games::dice::{slso8, Game, DICE_COUNT};
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -89,7 +89,12 @@ fn log_button_press(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, index: usiz
 }
 
 /// Sends a single command byte to the panel.
-fn send_command(spi: &mut Spi<'_, esp_hal::Blocking>, dc: &mut Output, cs: &mut Output, command: u8) {
+fn send_command(
+    spi: &mut Spi<'_, esp_hal::Blocking>,
+    dc: &mut Output,
+    cs: &mut Output,
+    command: u8,
+) {
     cs.set_low();
     dc.set_low();
     let _ = spi.write(&[command]);
@@ -97,12 +102,7 @@ fn send_command(spi: &mut Spi<'_, esp_hal::Blocking>, dc: &mut Output, cs: &mut 
 }
 
 /// Sends a block of data bytes to the panel.
-fn send_data(
-    spi: &mut Spi<'_, esp_hal::Blocking>,
-    dc: &mut Output,
-    cs: &mut Output,
-    data: &[u8],
-) {
+fn send_data(spi: &mut Spi<'_, esp_hal::Blocking>, dc: &mut Output, cs: &mut Output, data: &[u8]) {
     cs.set_low();
     dc.set_high();
     let _ = spi.write(data);
@@ -149,11 +149,27 @@ const INIT_SEQUENCE: &[(&[u8], &[u8])] = &[
     (&[0xae], &[0x77]),
     (&[0xcd], &[0x63]),
     (&[0xe8], &[0x34]),
-    (&[0x62], &[0x18, 0x0d, 0x71, 0xed, 0x70, 0x70, 0x18, 0x0f, 0x71, 0xef, 0x70, 0x70]),
-    (&[0x63], &[0x18, 0x11, 0x71, 0xf1, 0x70, 0x70, 0x18, 0x13, 0x71, 0xf3, 0x70, 0x70]),
+    (
+        &[0x62],
+        &[
+            0x18, 0x0d, 0x71, 0xed, 0x70, 0x70, 0x18, 0x0f, 0x71, 0xef, 0x70, 0x70,
+        ],
+    ),
+    (
+        &[0x63],
+        &[
+            0x18, 0x11, 0x71, 0xf1, 0x70, 0x70, 0x18, 0x13, 0x71, 0xf3, 0x70, 0x70,
+        ],
+    ),
     (&[0x64], &[0x28, 0x29, 0xf1, 0x01, 0xf1, 0x00, 0x07]),
-    (&[0x66], &[0x3c, 0x00, 0xcd, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00]),
-    (&[0x67], &[0x00, 0x3c, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98]),
+    (
+        &[0x66],
+        &[0x3c, 0x00, 0xcd, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00],
+    ),
+    (
+        &[0x67],
+        &[0x00, 0x3c, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98],
+    ),
     (&[0x74], &[0x10, 0x85, 0x80, 0x00, 0x00, 0x4e, 0x00]),
     (&[0x98], &[0x3e, 0x07]),
     (&[0x35], &[]),
@@ -216,11 +232,7 @@ fn probe_expander(i2c: &mut I2c<'_, esp_hal::Blocking>) -> u8 {
 }
 
 /// Reads one byte from an I2C register on the expander.
-fn read_expander_register(
-    i2c: &mut I2c<'_, esp_hal::Blocking>,
-    address: u8,
-    register: u8,
-) -> u8 {
+fn read_expander_register(i2c: &mut I2c<'_, esp_hal::Blocking>, address: u8, register: u8) -> u8 {
     let mut value = [0u8; 1];
     let _ = i2c.write_read(address, &[register], &mut value);
     value[0]
@@ -272,17 +284,40 @@ fn die_slot(count: usize, index: usize) -> i32 {
 /// Draws a single die face with its pip layout.
 fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
     let half = size / 2;
-    canvas.rect_filled(cx - half, cy - half, size, size, slso8::CREAM);
-    canvas.rect(cx - half, cy - half, size, size, slso8::BURNT);
+    let x = cx - half;
+    let y = cy - half;
+    let corner = (size / 6).clamp(2, 14);
 
-    let step = size / 4;
-    let pip = (size / 7).max(2);
+    // Slightly rounded body with a thin burnt outline.
+    rounded_rect_filled(
+        canvas,
+        x - 1,
+        y - 1,
+        size + 2,
+        size + 2,
+        corner + 1,
+        slso8::BURNT,
+    );
+    rounded_rect_filled(canvas, x, y, size, size, corner, slso8::CREAM);
+
+    // Pips sit a third of the way across each axis; the wide step keeps the
+    // dots on a 3-column face (2/4/6) well separated even at the largest size.
+    let step = size / 3;
+    // Radius stays comfortably below `step` so dots never touch, while staying
+    // as round and large as possible.
+    let pip = (size / 9).max(3);
     let dots: &[(i32, i32)] = match value {
         1 => &[(0, 0)],
         2 => &[(-step, -step), (step, step)],
         3 => &[(-step, -step), (0, 0), (step, step)],
         4 => &[(-step, -step), (step, -step), (-step, step), (step, step)],
-        5 => &[(-step, -step), (step, -step), (0, 0), (-step, step), (step, step)],
+        5 => &[
+            (-step, -step),
+            (step, -step),
+            (0, 0),
+            (-step, step),
+            (step, step),
+        ],
         _ => &[
             (-step, -step),
             (step, -step),
@@ -293,8 +328,34 @@ fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
         ],
     };
     for &(dx, dy) in dots {
-        canvas.rect_filled(cx + dx - pip / 2, cy + dy - pip / 2, pip, pip, slso8::NAVY);
+        canvas.circle_filled(cx + dx, cy + dy, pip, slso8::NAVY);
     }
+}
+
+/// Fills a rectangle with rounded corners of the given radius.
+fn rounded_rect_filled(
+    canvas: &mut Canvas,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    radius: i32,
+    color: Color,
+) {
+    let radius = radius.clamp(0, width / 2).min(height / 2);
+    canvas.rect_filled(x + radius, y, width - 2 * radius, height, color);
+    canvas.rect_filled(x, y + radius, radius, height - 2 * radius, color);
+    canvas.rect_filled(
+        x + width - radius,
+        y + radius,
+        radius,
+        height - 2 * radius,
+        color,
+    );
+    canvas.circle_filled(x + radius, y + radius, radius, color);
+    canvas.circle_filled(x + width - radius, y + radius, radius, color);
+    canvas.circle_filled(x + radius, y + height - radius, radius, color);
+    canvas.circle_filled(x + width - radius, y + height - radius, radius, color);
 }
 
 /// Draws an empty die slot (used before a roll).
@@ -325,7 +386,7 @@ fn animate_roll(
     rng: &mut Prng,
 ) {
     const FRAMES: i32 = 13;
-    const SETTLE_Y: i32 = 112;
+    const SETTLE_Y: i32 = 120;
     let count = final_values.len().min(DICE_COUNT);
 
     // Scatter the dice across the upper play area.
@@ -466,8 +527,13 @@ fn main() -> ! {
                     // its full pool but keeps the just-rolled dice in place.
                     values[..thrown].copy_from_slice(&game.dice()[..thrown]);
                     animate_roll(
-                        &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
-                        &values[..thrown], &mut rng,
+                        &mut canvas,
+                        &mut spi,
+                        &mut dc,
+                        &mut cs,
+                        &mut delay,
+                        &values[..thrown],
+                        &mut rng,
                     );
                     selector = 0;
                     marked = [false; DICE_COUNT];
@@ -475,7 +541,11 @@ fn main() -> ! {
                         last_farkle = true;
                         last_banker = turn_player;
                     }
-                    phase = if scorable { Phase::Select } else { Phase::TurnOver };
+                    phase = if scorable {
+                        Phase::Select
+                    } else {
+                        Phase::TurnOver
+                    };
                 }
             }
             Phase::Select if in_play > 0 => {
@@ -510,7 +580,10 @@ fn main() -> ! {
                         Err(_) => bad_frames = 9, // invalid selection flash
                     }
                 }
-                if input.just_pressed(Button::Btn6) {
+                // Re-roll is only legal once the player has set aside at least
+                // one scoring die (`in_play < DICE_COUNT`); otherwise they could
+                // keep rolling the full five without ever scoring.
+                if in_play < DICE_COUNT && input.just_pressed(Button::Btn6) {
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
                     let scorable = game.throw(&mut rng);
@@ -519,8 +592,13 @@ fn main() -> ! {
                     // its full pool but keeps the just-rolled dice in place.
                     values[..thrown].copy_from_slice(&game.dice()[..thrown]);
                     animate_roll(
-                        &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
-                        &values[..thrown], &mut rng,
+                        &mut canvas,
+                        &mut spi,
+                        &mut dc,
+                        &mut cs,
+                        &mut delay,
+                        &values[..thrown],
+                        &mut rng,
                     );
                     selector = 0;
                     marked = [false; DICE_COUNT];
@@ -528,7 +606,11 @@ fn main() -> ! {
                         last_farkle = true;
                         last_banker = turn_player;
                     }
-                    phase = if scorable { Phase::Select } else { Phase::TurnOver };
+                    phase = if scorable {
+                        Phase::Select
+                    } else {
+                        Phase::TurnOver
+                    };
                 }
                 if input.just_pressed(Button::Btn8) {
                     last_banker = game.current_player();
@@ -558,9 +640,21 @@ fn main() -> ! {
         let current_player = game.current_player();
         let active = slso8::ORANGE;
         let idle = slso8::MAUVE;
-        canvas.draw_text("P0", 8, 4, 1, if current_player == 0 { active } else { idle });
+        canvas.draw_text(
+            "P0",
+            8,
+            4,
+            1,
+            if current_player == 0 { active } else { idle },
+        );
         draw_number(&mut canvas, 34, 4, game.score(0), slso8::CREAM, 1);
-        canvas.draw_text("P1", 188, 4, 1, if current_player == 1 { active } else { idle });
+        canvas.draw_text(
+            "P1",
+            188,
+            4,
+            1,
+            if current_player == 1 { active } else { idle },
+        );
         draw_number(&mut canvas, 214, 4, game.score(1), slso8::CREAM, 1);
         let active_x = if current_player == 0 { 8 } else { 188 };
         canvas.rect(active_x, 14, 24, 2, slso8::ORANGE);
@@ -574,8 +668,9 @@ fn main() -> ! {
         match phase {
             Phase::Select => {
                 // All dice share one centre so the active die grows in place
-                // instead of shifting upward when it gets larger.
-                const CENTER_Y: i32 = 106;
+                // instead of shifting when it gets larger. 120 is the middle of
+                // the 240-tall display, so the row sits vertically centred.
+                const CENTER_Y: i32 = 120;
                 for index in 0..count {
                     let x = die_slot(count, index);
                     let selected = index == selector;
@@ -589,18 +684,13 @@ fn main() -> ! {
                     };
                     draw_die(&mut canvas, x, CENTER_Y, size, dice[index]);
                     if marked_die {
-                        draw_centered(
-                            &mut canvas,
-                            CENTER_Y + size / 2 + 6,
-                            "*",
-                            slso8::ORANGE,
-                        );
+                        draw_centered(&mut canvas, CENTER_Y + size / 2 + 6, "*", slso8::ORANGE);
                     }
                 }
             }
             _ => {
                 for index in 0..game.dice_count() {
-                    draw_slot(&mut canvas, die_slot(game.dice_count(), index), 104, DIE);
+                    draw_slot(&mut canvas, die_slot(game.dice_count(), index), 120, DIE);
                 }
             }
         }
@@ -623,7 +713,14 @@ fn main() -> ! {
                         draw_number(&mut canvas, 120, 128, last_banked, slso8::CREAM, 2);
                     }
                     draw_pn(&mut canvas, 120, 150, last_banker, slso8::ORANGE);
-                    draw_number(&mut canvas, 120, 160, game.score(last_banker), slso8::CREAM, 1);
+                    draw_number(
+                        &mut canvas,
+                        120,
+                        160,
+                        game.score(last_banker),
+                        slso8::CREAM,
+                        1,
+                    );
                     draw_centered(&mut canvas, 184, "NEXT - B8", slso8::CREAM);
                 }
             }

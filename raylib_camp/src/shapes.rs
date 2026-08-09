@@ -66,7 +66,10 @@ impl<'a> Canvas<'a> {
             if half_width_squared < 0 {
                 continue;
             }
-            let half_width = isqrt(half_width_squared);
+            // Clamp to a minimum width of 3 so the top/bottom rows form a
+            // small flat cap instead of a single-pixel needle (which reads as
+            // a "star" point on small discs).
+            let half_width = isqrt(half_width_squared).max(1);
             let row_y = center_y + offset_y;
             self.fill_row(
                 row_y,
