@@ -889,7 +889,10 @@ fn main() -> ! {
                 }
                 Phase::TurnOver => {
                     if last_farkle {
-                        draw_centered(&mut canvas, 115, "FARKLE!", slso8::BURNT);
+                        // Big, vertically-centred FARKLE!.
+                        let text = "FARKLE!";
+                        let text_width = canvas.measure_text(text, 3);
+                        canvas.draw_text(text, 120 - text_width / 2, 105, 3, slso8::BURNT);
                     } else {
                         // "BANKED" label + amount, block vertically centred on
                         // the middle (120) of the 240-tall display; big font.
