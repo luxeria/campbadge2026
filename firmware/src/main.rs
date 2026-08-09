@@ -62,6 +62,12 @@ static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
 const DIE: i32 = 38;
 /// Horizontal spacing between dice slots.
 const SLOT_SPACING: i32 = 46;
+/// Softest step of the die face's bottom shading gradient.
+const DIE_SHADE_LIGHT: Color = Color::rgb565(0xf7, 0xea, 0xd3);
+/// Mid step of the die face's bottom shading gradient.
+const DIE_SHADE_MID: Color = Color::rgb565(0xf0, 0xdf, 0xc4);
+/// Deepest step of the die face's bottom shading gradient.
+const DIE_SHADE_DARK: Color = Color::rgb565(0xe8, 0xd4, 0xb4);
 /// Frames a farkle turn-over screen waits before handing itself over (~2 s at
 /// ~30 fps), so the player never has to press B8 to "bank 0" and continue.
 const FARKLE_HOLD_FRAMES: u32 = 60;
@@ -393,6 +399,15 @@ fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8, outline
         outline,
     );
     rounded_rect_filled(canvas, x, y, size, size, corner, slso8::CREAM);
+
+    // A soft, stepped gradient fades the lower part of the face toward a
+    // slightly darker tone, giving the die gentle volume without a hard band.
+    const SHADE_STEP: i32 = 2;
+    let shade_steps = [DIE_SHADE_LIGHT, DIE_SHADE_MID, DIE_SHADE_DARK];
+    for (index, shade) in shade_steps.iter().enumerate() {
+        let band_y = y + size - (shade_steps.len() - index) as i32 * SHADE_STEP;
+        canvas.rect_filled(x + 2, band_y, size - 4, SHADE_STEP, *shade);
+    }
 
     // Pips sit a third of the way across each axis; the wide step keeps the
     // dots on a 3-column face (2/4/6) well separated even at the largest size.
