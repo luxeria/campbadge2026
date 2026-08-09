@@ -25,6 +25,7 @@ use raylib_camp::rand::Prng;
 
 use games::dice::{slso8, Game, DICE_COUNT};
 
+mod buzzer;
 mod expander;
 
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
@@ -571,7 +572,8 @@ fn animate_roll(
 }
 
 /// Blinks a farkled throw on screen a few times - a beat to register the miss -
-/// before handing over to the turn-over (FARKLE) screen.
+/// while the descending bust jingle plays, before handing over to the turn-over
+/// (FARKLE) screen.
 fn blink_farkle(
     canvas: &mut Canvas,
     spi: &mut Spi<'_, esp_hal::Blocking>,
@@ -584,6 +586,7 @@ fn blink_farkle(
     const VISIBLE_MS: u32 = 220;
     const HIDDEN_MS: u32 = 220;
     let count = dice.len().min(DICE_COUNT);
+
     for _ in 0..BLINKS {
         canvas.clear(slso8::NAVY);
         for index in 0..count {
@@ -604,7 +607,6 @@ fn blink_farkle(
         delay.delay_millis(HIDDEN_MS);
     }
 }
-
 /// Application entry point.
 #[main]
 fn main() -> ! {
@@ -613,6 +615,14 @@ fn main() -> ! {
     let (_rx, mut tx) = usb.split();
     let mut delay = Delay::new();
     log_line(&mut tx, "badge: dice starting\n");
+
+    // Buzzer startup chirp so the passive SMD8530 can be verified from the
+    // very first boot. It uses its own LEDC channel and GPIO2, independent of
+    // the I2C/SPI buses brought up below.
+    let mut ledc = esp_hal::ledc::Ledc::new(peripherals.LEDC);
+    ledc.set_global_slow_clock(esp_hal::ledc::LSGlobalClkSource::APBClk);
+    buzzer::play_startup(&ledc, &mut delay);
+    log_line(&mut tx, "badge: startup chirp played\n");
 
     let mut i2c = I2c::new(
         peripherals.I2C0,
@@ -678,6 +688,10 @@ fn main() -> ! {
     let mut bad_frames: u32 = 0;
     let mut last_banker: usize = 0;
     let mut last_banked: u32 = 0;
+    // Set when a bust should sound once its screen has been drawn, so the
+    // sound never freezes the blink leading up to it.
+    let mut farkle_sound_pending: bool = false;
+    let mut win_sound_pending: bool = false;
     let mut last_farkle: bool = false;
     // Frames spent on the turn-over screen; drives the automatic hand-off after
     // a farkle so the player never has to "bank 0" to continue.
@@ -737,6 +751,7 @@ fn main() -> ! {
                 last_farkle = false;
                 active_player = 0;
                 scored_since_throw = false;
+                buzzer::play_startup(&ledc, &mut delay);
                 phase = Phase::AwaitRoll;
                 log_line(&mut tx, "badge: game reset by BTN7 triple-press\n");
             }
@@ -783,6 +798,7 @@ fn main() -> ! {
                             &mut delay,
                             &rolled[..thrown],
                         );
+                        farkle_sound_pending = true;
                         phase = Phase::TurnOver;
                     }
                 }
@@ -827,11 +843,12 @@ fn main() -> ! {
                             selector = 0;
                             marked = [false; DICE_COUNT];
                             scored_since_throw = true;
-                            // Hot dice: if every die in play was scored, the
-                            // game has already reset to a fresh five, so hand
+                            // Clearing the last die in play is hot dice: hand
                             // back to the rolling phase for a roll-again/bank
-                            // choice rather than staying in Select (where the
-                            // re-roll guard would block a full pool).
+                            // choice. The ascending jingle marks the feat.
+                            if count == in_play {
+                                buzzer::play_hot_dice(&ledc, &mut delay);
+                            }
                             phase = if count == in_play {
                                 Phase::AwaitRoll
                             } else {
@@ -879,6 +896,7 @@ fn main() -> ! {
                             &mut delay,
                             &rolled[..thrown],
                         );
+                        farkle_sound_pending = true;
                         phase = Phase::TurnOver;
                     }
                 }
@@ -917,12 +935,13 @@ fn main() -> ! {
                     // The next player takes the table only once the score screen
                     // is dismissed, so their LED lights on the hand-off.
                     active_player = game.current_player();
-                    // Someone reached the winning score: end the game instead of
-                    // starting another turn.
-                    phase = if game.winner().is_some() {
-                        Phase::Winner
+                    // Someone reached the winning score: end the game, sounding
+                    // the fanfare once the winner screen is drawn.
+                    if game.winner().is_some() {
+                        win_sound_pending = true;
+                        phase = Phase::Winner;
                     } else {
-                        Phase::AwaitRoll
+                        phase = Phase::AwaitRoll;
                     };
                 }
             }
@@ -1157,6 +1176,18 @@ fn main() -> ! {
         }
 
         flush_screen(&mut spi, &mut dc, &mut cs, canvas.as_slice());
+
+        // Play a scheduled result sound only once its screen is already on the
+        // panel, so a melody never freezes the animation that leads into it.
+        if farkle_sound_pending {
+            buzzer::play_farkle(&ledc, &mut delay);
+            farkle_sound_pending = false;
+        }
+        if win_sound_pending {
+            buzzer::play_win(&ledc, &mut delay);
+            win_sound_pending = false;
+        }
+
         delay.delay_millis(33);
     }
 }
