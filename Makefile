@@ -5,7 +5,6 @@
 	build \
 	format \
 	clippy \
-	doc \
 	test \
 	flash \
 	clean
@@ -19,8 +18,10 @@ install-toolchain:
 install-flash:
 	@command -v espflash >/dev/null 2>&1 || cargo install espflash
 
+# The xtensa target is set in firmware/.cargo/config.toml, so the build must
+# run from firmware/; the source of `~/export-esp.sh` is shell-level setup.
 build:
-	cargo build --release
+	cd firmware && cargo build --release
 
 format:
 	cargo fmt --all --check
@@ -28,14 +29,14 @@ format:
 clippy:
 	cargo clippy --all-features --workspace --tests --benches -- --deny warnings
 
-doc:
-	cargo doc --all-features --workspace --document-private-items --no-deps
-
 test: format clippy
 	cargo test --workspace --all-targets
 
+# Requires the Xtensa toolchain (see install-toolchain / AGENTS.md). espflash
+# auto-detects the board; append `--port <device>` only if more than one
+# serial device could otherwise be ambiguous.
 flash: build
-	espflash flash --monitor target/xtensa-esp32s3-espidf/release/firmware
+	espflash flash --monitor target/xtensa-esp32s3-none-elf/release/firmware
 
 clean:
 	cargo clean

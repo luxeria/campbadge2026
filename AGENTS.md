@@ -19,9 +19,35 @@ We require the official Rust formatter and clippy linter. In addition to that, p
 
 ## Flashing
 
-Target board: **M5Stack Atom S3 Lite** (env: `atoms3_hello_badge`).
+### C++ (PlatformIO)
+
+The command below targets the **M5Stack Atom S3 Lite** (env: `atoms3_hello_badge`)
+and is for the C++/PlatformIO example firmware:
 
 ```sh
 cd Software/CPP/Mixed-Examples
 pio run -e atoms3_hello_badge -t upload -t monitor
 ```
+
+### Rust (the primary firmware)
+
+There is a short and very usef Makefile that teaches how to do stuff.
+
+TL;DR:
+
+Install the toolchain once: set up Rust via rustup, then install `espflash` and
+`espup` with cargo. `espup install` downloads the Xtensa nightly overlays and
+creates `~/export-esp.sh`; source that script in every new shell so the
+Xtensa toolchain is on the PATH.
+
+```sh
+source "$HOME/export-esp.sh"   # configures the Xtensa toolchain for this shell
+cd firmware
+cargo build --release
+cd ..
+espflash flash target/xtensa-esp32s3-none-elf/release/firmware --monitor
+```
+
+`espflash` auto-detects the connected board; pass `--port` (e.g. `/dev/ttyUSB0`,
+adapting to your platform) only if more than one serial device needs
+disambiguation.
