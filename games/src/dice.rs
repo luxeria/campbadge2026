@@ -399,4 +399,77 @@ mod tests {
         let _ = game.bank();
         assert_eq!(game.current_player(), 1);
     }
+
+    #[test]
+    fn continued_turn_scoring_removes_a_die() {
+        let mut game = Game::new();
+        // Three dice in play from a continued turn.
+        game.dice_count = 3;
+        game.dice = [1, 5, 2, 0, 0];
+        let gained = game.score_selected(&[0]).unwrap();
+        assert_eq!(gained, 100);
+        assert_eq!(game.dice_count(), 2, "scoring one die should leave 2");
+        assert_eq!(game.dice(), &[5, 2]);
+    }
+
+    #[test]
+    fn continued_turn_scoring_removes_a_die_index_2() {
+        let mut game = Game::new();
+        game.dice_count = 3;
+        game.dice = [2, 5, 1, 0, 0];
+        let gained = game.score_selected(&[2]).unwrap();
+        assert_eq!(gained, 100);
+        assert_eq!(game.dice_count(), 2, "scoring one die should leave 2");
+        assert_eq!(game.dice(), &[2, 5]);
+    }
+
+    #[test]
+    fn score_single_one_then_small_street() {
+        // Full street 1-2-3-4-5: bank the single 1, then the remaining street.
+        let mut game = Game::new();
+        game.dice_count = 5;
+        game.dice = [1, 2, 3, 4, 5];
+        let g1 = game.score_selected(&[0]).unwrap();
+        assert_eq!(g1, 100);
+        assert_eq!(game.dice(), &[2, 3, 4, 5]);
+        assert_eq!(game.dice_count(), 4);
+        let g2 = game.score_selected(&[0, 1, 2, 3]).unwrap(); // 2,3,4,5
+        assert_eq!(g2, 500);
+        assert_eq!(
+            game.dice_count(),
+            DICE_COUNT,
+            "street cleared the remaining dice, so hot dice resets to five"
+        );
+        assert_eq!(game.turn_score(), 600);
+    }
+
+    #[test]
+    fn score_small_street_then_single_one() {
+        // 2-3-4-5 street first, then the single 1.
+        let mut game = Game::new();
+        game.dice_count = 5;
+        game.dice = [2, 3, 4, 5, 1];
+        let g1 = game.score_selected(&[0, 1, 2, 3]).unwrap(); // 2,3,4,5
+        assert_eq!(g1, 500);
+        assert_eq!(game.dice(), &[1]);
+        let g2 = game.score_selected(&[0]).unwrap();
+        assert_eq!(g2, 100);
+        assert_eq!(game.dice_count(), DICE_COUNT);
+        assert_eq!(game.turn_score(), 600);
+    }
+
+    #[test]
+    fn three_sixes_after_scoring_two_fives() {
+        // Two 5s banked (100), then the remaining three 6s are a valid triple.
+        let mut game = Game::new();
+        game.dice_count = 5;
+        game.dice = [5, 5, 6, 6, 6];
+        let g1 = game.score_selected(&[0, 1]).unwrap();
+        assert_eq!(g1, 100);
+        assert_eq!(game.dice(), &[6, 6, 6]);
+        let g2 = game.score_selected(&[0, 1, 2]).unwrap();
+        assert_eq!(g2, 600);
+        assert_eq!(game.dice_count(), DICE_COUNT); // hot dice after clearing all
+        assert_eq!(game.turn_score(), 700);
+    }
 }

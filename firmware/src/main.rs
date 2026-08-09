@@ -50,6 +50,9 @@ static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
 const DIE: i32 = 38;
 /// Horizontal spacing between dice slots.
 const SLOT_SPACING: i32 = 46;
+/// Frames a farkle turn-over screen waits before handing itself over (~2 s at
+/// ~30 fps), so the player never has to press B8 to "bank 0" and continue.
+const FARKLE_HOLD_FRAMES: u32 = 60;
 
 /// Emits a log line without ever blocking the caller.
 fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
@@ -266,12 +269,37 @@ fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
 }
 
 /// Draws a short `P<n>` player label centred on the given point.
-fn draw_pn(canvas: &mut Canvas, x: i32, y: i32, player: usize, color: Color) {
-    let mut buffer = *b"P0";
-    buffer[1] = b'0' + player as u8;
-    if let Ok(text) = core::str::from_utf8(&buffer) {
-        let text_width = canvas.measure_text(text, 1);
-        canvas.draw_text(text, x - text_width / 2, y, 1, color);
+/// Draws a centred `A  <score>` style ledger line for one player.
+fn draw_ledger(
+    canvas: &mut Canvas,
+    cx: i32,
+    y: i32,
+    player: usize,
+    score: u32,
+    scale: i32,
+    color: Color,
+) {
+    let mut buffer = [0u8; 12];
+    buffer[0] = if player % 2 == 0 { b'A' } else { b'B' };
+    buffer[1] = b' ';
+    buffer[2] = b' ';
+    let mut digits = [0u8; 9];
+    let mut n = 0;
+    if score == 0 {
+        digits[n] = b'0';
+        n += 1;
+    }
+    let mut v = score;
+    while v > 0 && n < digits.len() {
+        digits[n] = b'0' + (v % 10) as u8;
+        v /= 10;
+        n += 1;
+    }
+    digits[..n].reverse();
+    buffer[3..3 + n].copy_from_slice(&digits[..n]);
+    if let Ok(text) = core::str::from_utf8(&buffer[..3 + n]) {
+        let text_width = canvas.measure_text(text, scale);
+        canvas.draw_text(text, cx - text_width / 2, y, scale, color);
     }
 }
 
@@ -459,6 +487,34 @@ fn animate_roll(
     }
 }
 
+/// Blinks a farkled throw on screen a few times - a beat to register the miss -
+/// before handing over to the turn-over (FARKLE) screen.
+fn blink_farkle(
+    canvas: &mut Canvas,
+    spi: &mut Spi<'_, esp_hal::Blocking>,
+    dc: &mut Output,
+    cs: &mut Output,
+    delay: &mut Delay,
+    dice: &[u8],
+) {
+    const BLINKS: u32 = 3;
+    const VISIBLE_MS: u32 = 220;
+    const HIDDEN_MS: u32 = 220;
+    let count = dice.len().min(DICE_COUNT);
+    for _ in 0..BLINKS {
+        canvas.clear(slso8::NAVY);
+        for index in 0..count {
+            draw_die(canvas, die_slot(count, index), 120, DIE, dice[index]);
+        }
+        flush_screen(spi, dc, cs, canvas.as_slice());
+        delay.delay_millis(VISIBLE_MS);
+
+        canvas.clear(slso8::NAVY);
+        flush_screen(spi, dc, cs, canvas.as_slice());
+        delay.delay_millis(HIDDEN_MS);
+    }
+}
+
 /// Application entry point.
 #[main]
 fn main() -> ! {
@@ -528,6 +584,9 @@ fn main() -> ! {
     let mut last_banker: usize = 0;
     let mut last_banked: u32 = 0;
     let mut last_farkle: bool = false;
+    // Frames spent on the turn-over screen; drives the automatic hand-off after
+    // a farkle so the player never has to "bank 0" to continue.
+    let mut turnover_frames: u32 = 0;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -566,18 +625,45 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    // Start the selector on the leftmost 1 or 5 if any rolled.
+                    // Start on the leftmost 1 or 5 if any rolled, and mark that
+                    // die so "Score" removes it straight away instead of being
+                    // an empty selection.
                     marked = [false; DICE_COUNT];
-                    selector = first_scorable(game.dice()).unwrap_or(0);
-                    if !scorable {
+                    match first_scorable(game.dice()) {
+                        Some(index) => {
+                            selector = index;
+                            marked[index] = true;
+                        }
+                        None => selector = 0,
+                    }
+                    if scorable {
+                        phase = Phase::Select;
+                    } else {
                         last_farkle = true;
                         last_banker = turn_player;
+                        // Blink the farkled throw a few times before the FARKLE
+                        // screen, so the player registers the miss.
+                        let rolled = game.dice();
+                        blink_farkle(
+                            &mut canvas,
+                            &mut spi,
+                            &mut dc,
+                            &mut cs,
+                            &mut delay,
+                            &rolled[..thrown],
+                        );
+                        phase = Phase::TurnOver;
                     }
-                    phase = if scorable {
-                        Phase::Select
-                    } else {
-                        Phase::TurnOver
-                    };
+                }
+                // Hot dice: after scoring all five, the player may also bank the
+                // turn instead of rolling again. Only possible when the turn
+                // already has points (`turn_score > 0`).
+                if game.turn_score() > 0 && input.just_pressed(Button::Btn8) {
+                    last_banker = game.current_player();
+                    last_banked = game.turn_score();
+                    last_farkle = false;
+                    game.bank();
+                    phase = Phase::TurnOver;
                 }
             }
             Phase::Select if in_play > 0 => {
@@ -603,8 +689,13 @@ fn main() -> ! {
                         Ok(_) => {
                             selector = 0;
                             marked = [false; DICE_COUNT];
-                            phase = if game.dice_count() == 0 {
-                                Phase::AwaitRoll // hot dice
+                            // Hot dice: if every die in play was scored, the
+                            // game has already reset to a fresh five, so hand
+                            // back to the rolling phase for a roll-again/bank
+                            // choice rather than staying in Select (where the
+                            // re-roll guard would block a full pool).
+                            phase = if count == in_play {
+                                Phase::AwaitRoll
                             } else {
                                 Phase::Select
                             };
@@ -612,9 +703,7 @@ fn main() -> ! {
                         Err(_) => bad_frames = 9, // invalid selection flash
                     }
                 }
-                // Re-roll is only legal once the player has set aside at least
-                // one scoring die (`in_play < DICE_COUNT`); otherwise they could
-                // keep rolling the full five without ever scoring.
+                // Re-roll the leftover dice still in play (Btn6).
                 if in_play < DICE_COUNT && input.just_pressed(Button::Btn6) {
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
@@ -632,18 +721,32 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    // Start the selector on the leftmost 1 or 5 if any rolled.
+                    // Start on the leftmost 1 or 5 if any rolled, and mark that
+                    // die so "Score" removes it straight away.
                     marked = [false; DICE_COUNT];
-                    selector = first_scorable(game.dice()).unwrap_or(0);
-                    if !scorable {
+                    match first_scorable(game.dice()) {
+                        Some(index) => {
+                            selector = index;
+                            marked[index] = true;
+                        }
+                        None => selector = 0,
+                    }
+                    if scorable {
+                        phase = Phase::Select;
+                    } else {
                         last_farkle = true;
                         last_banker = turn_player;
+                        let rolled = game.dice();
+                        blink_farkle(
+                            &mut canvas,
+                            &mut spi,
+                            &mut dc,
+                            &mut cs,
+                            &mut delay,
+                            &rolled[..thrown],
+                        );
+                        phase = Phase::TurnOver;
                     }
-                    phase = if scorable {
-                        Phase::Select
-                    } else {
-                        Phase::TurnOver
-                    };
                 }
                 if input.just_pressed(Button::Btn8) {
                     last_banker = game.current_player();
@@ -654,7 +757,13 @@ fn main() -> ! {
                 }
             }
             _ => {
-                if input.just_pressed(Button::Btn8) {
+                // A farkle hands over automatically after a short beat; a bank
+                // keeps waiting for B8 so the banked amount can be read.
+                turnover_frames += 1;
+                if input.just_pressed(Button::Btn8)
+                    || (last_farkle && turnover_frames >= FARKLE_HOLD_FRAMES)
+                {
+                    turnover_frames = 0;
                     selector = 0;
                     marked = [false; DICE_COUNT];
                     phase = Phase::AwaitRoll;
@@ -674,7 +783,7 @@ fn main() -> ! {
         let active = slso8::ORANGE;
         let idle = slso8::MAUVE;
         canvas.draw_text(
-            "P0",
+            "A",
             8,
             4,
             1,
@@ -682,7 +791,7 @@ fn main() -> ! {
         );
         draw_number(&mut canvas, 34, 4, game.score(0), slso8::CREAM, 1);
         canvas.draw_text(
-            "P1",
+            "B",
             188,
             4,
             1,
@@ -695,6 +804,14 @@ fn main() -> ! {
         // The turn's accounting sits above the dice row, out of the way.
         draw_centered(&mut canvas, 18, "TURN", slso8::PEACH);
         draw_number(&mut canvas, 120, 32, game.turn_score(), slso8::CREAM, 2);
+
+        // Just below the turn score, name the player currently at the table.
+        let playing: &str = if current_player == 0 {
+            "PLAYING  A"
+        } else {
+            "PLAYING  B"
+        };
+        draw_centered(&mut canvas, 54, playing, slso8::PEACH);
 
         let dice = game.dice();
         let count = dice.len();
@@ -721,11 +838,12 @@ fn main() -> ! {
                     }
                 }
             }
-            _ => {
+            Phase::AwaitRoll => {
                 for index in 0..game.dice_count() {
                     draw_slot(&mut canvas, die_slot(game.dice_count(), index), 120, DIE);
                 }
             }
+            _ => {}
         }
 
         if bad_frames > 0 {
@@ -733,7 +851,12 @@ fn main() -> ! {
         } else {
             match phase {
                 Phase::AwaitRoll => {
-                    draw_centered(&mut canvas, 186, "ROLL (B6)", slso8::CREAM);
+                    if game.turn_score() > 0 {
+                        // Hot dice: roll all five again or bank.
+                        draw_centered(&mut canvas, 186, "ROLL B6 . BANK B8", slso8::PEACH);
+                    } else {
+                        draw_centered(&mut canvas, 186, "ROLL (B6)", slso8::CREAM);
+                    }
                 }
                 Phase::Select => {
                     draw_centered(&mut canvas, 172, "MARK B2 . SCORE B4", slso8::PEACH);
@@ -741,20 +864,28 @@ fn main() -> ! {
                 }
                 Phase::TurnOver => {
                     if last_farkle {
-                        draw_centered(&mut canvas, 136, "FARKLE!", slso8::BURNT);
+                        draw_centered(&mut canvas, 115, "FARKLE!", slso8::BURNT);
                     } else {
-                        draw_number(&mut canvas, 120, 128, last_banked, slso8::CREAM, 2);
+                        // "BANKED" label + amount, block vertically centred on
+                        // the middle (120) of the 240-tall display; big font.
+                        draw_centered(&mut canvas, 97, "BANKED", slso8::PEACH);
+                        draw_number(&mut canvas, 120, 113, last_banked, slso8::CREAM, 3);
                     }
-                    draw_pn(&mut canvas, 120, 150, last_banker, slso8::ORANGE);
-                    draw_number(
-                        &mut canvas,
-                        120,
-                        160,
-                        game.score(last_banker),
-                        slso8::CREAM,
-                        1,
-                    );
-                    draw_centered(&mut canvas, 184, "NEXT - B8", slso8::CREAM);
+                    // Both players' banked totals, the one who just went lit.
+                    for player in 0..2 {
+                        let color = if player == last_banker { active } else { idle };
+                        let line_y = 154 + player as i32 * 24;
+                        draw_ledger(
+                            &mut canvas,
+                            120,
+                            line_y,
+                            player,
+                            game.score(player),
+                            2,
+                            color,
+                        );
+                    }
+                    draw_centered(&mut canvas, 212, "NEXT - B8", slso8::CREAM);
                 }
             }
         }
