@@ -332,6 +332,12 @@ fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
     }
 }
 
+/// Returns the index of the leftmost rolled 1 or 5, if any, so the selector
+/// can start on a scorable die after a throw.
+fn first_scorable(dice: &[u8]) -> Option<usize> {
+    dice.iter().position(|&value| value == 1 || value == 5)
+}
+
 /// Fills a rectangle with rounded corners of the given radius.
 fn rounded_rect_filled(
     canvas: &mut Canvas,
@@ -359,9 +365,34 @@ fn rounded_rect_filled(
 }
 
 /// Draws an empty die slot (used before a roll).
+/// Draws an empty, rounded die slot with a question-mark prompt (shown before
+/// a roll, and after the turn has ended but before matching dice land again).
 fn draw_slot(canvas: &mut Canvas, cx: i32, cy: i32, size: i32) {
     let half = size / 2;
-    canvas.rect(cx - half, cy - half, size, size, slso8::MAUVE);
+    let x = cx - half;
+    let y = cy - half;
+    let corner = (size / 6).clamp(2, 14);
+    // Hollow rounded outline in mauve, cut from the navy background.
+    rounded_rect_filled(canvas, x, y, size, size, corner, slso8::MAUVE);
+    rounded_rect_filled(
+        canvas,
+        x + 1,
+        y + 1,
+        size - 2,
+        size - 2,
+        (corner - 1).max(1),
+        slso8::NAVY,
+    );
+    // Vertically centred question-mark prompt (glyph is 10 px tall).
+    let text = "?";
+    let text_width = canvas.measure_text(text, 1);
+    canvas.draw_text(
+        text,
+        cx - text_width / 2,
+        cy - half + (size - 10) / 2,
+        1,
+        slso8::MAUVE,
+    );
 }
 
 /// Running phase of the local game loop.
@@ -535,8 +566,9 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    selector = 0;
+                    // Start the selector on the leftmost 1 or 5 if any rolled.
                     marked = [false; DICE_COUNT];
+                    selector = first_scorable(game.dice()).unwrap_or(0);
                     if !scorable {
                         last_farkle = true;
                         last_banker = turn_player;
@@ -600,8 +632,9 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    selector = 0;
+                    // Start the selector on the leftmost 1 or 5 if any rolled.
                     marked = [false; DICE_COUNT];
+                    selector = first_scorable(game.dice()).unwrap_or(0);
                     if !scorable {
                         last_farkle = true;
                         last_banker = turn_player;
@@ -661,7 +694,7 @@ fn main() -> ! {
 
         // The turn's accounting sits above the dice row, out of the way.
         draw_centered(&mut canvas, 18, "TURN", slso8::PEACH);
-        draw_number(&mut canvas, 120, 26, game.turn_score(), slso8::CREAM, 1);
+        draw_number(&mut canvas, 120, 32, game.turn_score(), slso8::CREAM, 2);
 
         let dice = game.dice();
         let count = dice.len();
