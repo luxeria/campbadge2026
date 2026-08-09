@@ -32,10 +32,16 @@ const BEEP_DUTY_PCT: u8 = 10;
 const STARTUP_NOTES: [(u32, u32); 3] = [(1047, 100), (0, 70), (1047, 100)];
 /// Farkle jingle: three descending notes, the last held a little longer.
 const FARKLE_NOTES: [(u32, u32); 3] = [(523, 135), (440, 135), (349, 350)];
-/// Hot-dice jingle: three ascending notes, the reverse of the farkle bust.
-const HOT_DICE_NOTES: [(u32, u32); 3] = [(349, 135), (440, 135), (523, 350)];
+/// Hot-dice arpeggio: three quick ascending notes, shorter than the held
+/// melody before it.
+const HOT_DICE_NOTES: [(u32, u32); 3] = [(349, 70), (440, 70), (523, 90)];
 /// Win fanfare: a bright rising "ta-daaaah" with the final note held.
 const WIN_NOTES: [(u32, u32); 2] = [(784, 150), (1047, 460)];
+/// B6 roll blip: a single very short note so rolls stay a quiet click (used
+/// for both a fresh throw and re-rolling the leftovers).
+const ROLL_NOTES: [(u32, u32); 1] = [(523, 30)];
+/// Bank milestone: a pleasant rising note when a large turn is banked.
+const BIG_BANK_NOTES: [(u32, u32); 2] = [(659, 90), (1047, 150)];
 
 /// Plays the startup chirp, also used when the game is reset by triple-BTN7.
 pub fn play_startup(ledc: &Ledc<'_>, delay: &mut Delay) {
@@ -55,6 +61,34 @@ pub fn play_hot_dice(ledc: &Ledc<'_>, delay: &mut Delay) {
 /// Plays the rising fanfare when a player wins the game.
 pub fn play_win(ledc: &Ledc<'_>, delay: &mut Delay) {
     play_notes(ledc, delay, &WIN_NOTES);
+}
+
+/// Plays the quick riffle that opens a fresh throw.
+pub fn play_roll(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &ROLL_NOTES);
+}
+
+/// Plays the same quiet B6 blip when re-rolling the leftover dice.
+pub fn play_reroll(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &ROLL_NOTES);
+}
+
+/// Plays the short note marking that `player` takes the table.
+///
+/// Player A keeps a lower pitch and player B a step up, echoing the seat
+/// colours so the hot-seat rotation is audible without looking at the screen.
+pub fn play_handoff(ledc: &Ledc<'_>, delay: &mut Delay, player: usize) {
+    let notes: &[(u32, u32)] = if player == 0 {
+        &[(523, 45), (659, 70)]
+    } else {
+        &[(659, 45), (784, 70)]
+    };
+    play_notes(ledc, delay, notes);
+}
+
+/// Plays the rising note that celebrates banking a large turn.
+pub fn play_big_bank(ledc: &Ledc<'_>, delay: &mut Delay) {
+    play_notes(ledc, delay, &BIG_BANK_NOTES);
 }
 
 /// Drives the buzzer through a short sequence of `(frequency, duration_ms)`.

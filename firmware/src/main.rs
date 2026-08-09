@@ -80,6 +80,8 @@ const HELP_SCALE: f32 = 1.5;
 const HELP_LETTER_SPACING: i32 = 2;
 /// Extra empty pixels between digits in scores and other numbers.
 const NUMBER_SPACING: i32 = 2;
+/// A banked turn score at or above this marks a milestone worth a rising note.
+const BIG_BANK_THRESHOLD: u32 = 1500;
 /// Scale of the big turn-indicator letter under the score.
 const ACTIVE_PLAYER_SCALE: i32 = 2;
 /// Button that toggles the on-screen button-hint text.
@@ -572,8 +574,8 @@ fn animate_roll(
 }
 
 /// Blinks a farkled throw on screen a few times - a beat to register the miss -
-/// while the descending bust jingle plays, before handing over to the turn-over
-/// (FARKLE) screen.
+/// Blinks a farkled throw on screen a few times before handing over to the
+/// turn-over (FARKLE) screen.
 fn blink_farkle(
     canvas: &mut Canvas,
     spi: &mut Spi<'_, esp_hal::Blocking>,
@@ -588,14 +590,13 @@ fn blink_farkle(
     let count = dice.len().min(DICE_COUNT);
 
     for _ in 0..BLINKS {
-        canvas.clear(slso8::NAVY);
-        for index in 0..count {
+        for (index, &value) in dice[..count].iter().enumerate() {
             draw_die(
                 canvas,
                 die_slot(count, index),
                 120,
                 DIE,
-                dice[index],
+                value,
                 slso8::BURNT,
             );
         }
@@ -688,10 +689,12 @@ fn main() -> ! {
     let mut bad_frames: u32 = 0;
     let mut last_banker: usize = 0;
     let mut last_banked: u32 = 0;
-    // Set when a bust should sound once its screen has been drawn, so the
-    // sound never freezes the blink leading up to it.
+    // Set when a bust/win should sound once its screen has been drawn, so the
+    // sound never freezes the animation leading up to it.
     let mut farkle_sound_pending: bool = false;
     let mut win_sound_pending: bool = false;
+    // Set when a big bank should sound on the BANKED screen.
+    let mut bank_pip_pending: bool = false;
     let mut last_farkle: bool = false;
     // Frames spent on the turn-over screen; drives the automatic hand-off after
     // a farkle so the player never has to "bank 0" to continue.
@@ -761,6 +764,7 @@ fn main() -> ! {
         match phase {
             Phase::AwaitRoll => {
                 if input.just_pressed(Button::Btn6) {
+                    buzzer::play_roll(&ledc, &mut delay);
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
                     scored_since_throw = false;
@@ -810,6 +814,7 @@ fn main() -> ! {
                     last_banked = game.turn_score();
                     last_farkle = false;
                     game.bank();
+                    bank_pip_pending = game.winner().is_none() && last_banked >= BIG_BANK_THRESHOLD;
                     phase = Phase::TurnOver;
                 }
             }
@@ -861,6 +866,7 @@ fn main() -> ! {
                 // Re-roll the leftover dice still in play (Btn6), which is only
                 // legal after scoring at least one die from the current throw.
                 if scored_since_throw && input.just_pressed(Button::Btn6) {
+                    buzzer::play_reroll(&ledc, &mut delay);
                     let turn_player = game.current_player();
                     let thrown = game.dice_count();
                     scored_since_throw = false;
@@ -905,6 +911,7 @@ fn main() -> ! {
                     last_banked = game.turn_score();
                     last_farkle = false;
                     game.bank();
+                    bank_pip_pending = game.winner().is_none() && last_banked >= BIG_BANK_THRESHOLD;
                     phase = Phase::TurnOver;
                 }
             }
@@ -941,6 +948,7 @@ fn main() -> ! {
                         win_sound_pending = true;
                         phase = Phase::Winner;
                     } else {
+                        buzzer::play_handoff(&ledc, &mut delay, active_player);
                         phase = Phase::AwaitRoll;
                     };
                 }
@@ -1186,6 +1194,10 @@ fn main() -> ! {
         if win_sound_pending {
             buzzer::play_win(&ledc, &mut delay);
             win_sound_pending = false;
+        }
+        if bank_pip_pending {
+            buzzer::play_big_bank(&ledc, &mut delay);
+            bank_pip_pending = false;
         }
 
         delay.delay_millis(33);
