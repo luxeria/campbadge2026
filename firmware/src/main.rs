@@ -34,10 +34,11 @@ const REG_CONFIG_0: u8 = 0x06;
 const REG_CONFIG_1: u8 = 0x07;
 const REG_OUTPUT_1: u8 = 0x03;
 
-/// TCA9539 configuration: port 0 (buttons) all inputs, port 1 low nibble
-/// (display reset + LEDs) outputs.
+/// TCA9539 configuration: port 0 (buttons) all inputs; port 1 keeps only the
+/// display reset (P1.0) as an output so the four LED pins stay inputs (off)
+/// from the very first write - they never light, so there is no boot flash.
 const PORT_0_INPUTS: u8 = 0xff;
-const PORT_1_OUTPUT_MASK: u8 = 0xe0;
+const LED_PINS_INPUT: u8 = 0xfe;
 
 /// GC9A01A display reset lives on expander pin P1.0.
 const DISPLAY_RESET_BIT: u8 = 0x01;
@@ -391,7 +392,7 @@ fn main() -> ! {
 
     i2c.write(expander, &[REG_CONFIG_0, PORT_0_INPUTS])
         .expect("configure expander port 0");
-    i2c.write(expander, &[REG_CONFIG_1, PORT_1_OUTPUT_MASK])
+    i2c.write(expander, &[REG_CONFIG_1, LED_PINS_INPUT])
         .expect("configure expander port 1");
 
     i2c.write(expander, &[REG_OUTPUT_1, DISPLAY_RESET_BIT])
