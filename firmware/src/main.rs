@@ -53,6 +53,8 @@ const SLOT_SPACING: i32 = 46;
 /// Frames a farkle turn-over screen waits before handing itself over (~2 s at
 /// ~30 fps), so the player never has to press B8 to "bank 0" and continue.
 const FARKLE_HOLD_FRAMES: u32 = 60;
+/// How many pixels the selected die lifts above the row (animated smoothly).
+const DIE_LIFT: i32 = 14;
 
 /// Emits a log line without ever blocking the caller.
 fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
@@ -310,13 +312,13 @@ fn die_slot(count: usize, index: usize) -> i32 {
 }
 
 /// Draws a single die face with its pip layout.
-fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
+fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8, outline: Color) {
     let half = size / 2;
     let x = cx - half;
     let y = cy - half;
     let corner = (size / 6).clamp(2, 14);
 
-    // Slightly rounded body with a thin burnt outline.
+    // Slightly rounded body with a thin outline in the given colour.
     rounded_rect_filled(
         canvas,
         x - 1,
@@ -324,7 +326,7 @@ fn draw_die(canvas: &mut Canvas, cx: i32, cy: i32, size: i32, value: u8) {
         size + 2,
         size + 2,
         corner + 1,
-        slso8::BURNT,
+        outline,
     );
     rounded_rect_filled(canvas, x, y, size, size, corner, slso8::CREAM);
 
@@ -479,7 +481,7 @@ fn animate_roll(
                 final_values[index]
             };
             let size = if progress < 0.5 { DIE + 8 } else { DIE };
-            draw_die(canvas, px[index], py[index], size, shown);
+            draw_die(canvas, px[index], py[index], size, shown, slso8::BURNT);
         }
 
         flush_screen(spi, dc, cs, canvas.as_slice());
@@ -504,7 +506,14 @@ fn blink_farkle(
     for _ in 0..BLINKS {
         canvas.clear(slso8::NAVY);
         for index in 0..count {
-            draw_die(canvas, die_slot(count, index), 120, DIE, dice[index]);
+            draw_die(
+                canvas,
+                die_slot(count, index),
+                120,
+                DIE,
+                dice[index],
+                slso8::BURNT,
+            );
         }
         flush_screen(spi, dc, cs, canvas.as_slice());
         delay.delay_millis(VISIBLE_MS);
@@ -587,6 +596,9 @@ fn main() -> ! {
     // Frames spent on the turn-over screen; drives the automatic hand-off after
     // a farkle so the player never has to "bank 0" to continue.
     let mut turnover_frames: u32 = 0;
+    // Current vertical lift of each die, eased toward its target each frame
+    // so moving the cursor looks smooth and fast.
+    let mut lift = [0i32; DICE_COUNT];
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -625,17 +637,10 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    // Start on the leftmost 1 or 5 if any rolled, and mark that
-                    // die so "Score" removes it straight away instead of being
-                    // an empty selection.
+                    // Start the cursor on the leftmost 1 or 5 if any rolled.
+                    // Nothing is pre-marked; Score falls back to the cursor die.
                     marked = [false; DICE_COUNT];
-                    match first_scorable(game.dice()) {
-                        Some(index) => {
-                            selector = index;
-                            marked[index] = true;
-                        }
-                        None => selector = 0,
-                    }
+                    selector = first_scorable(game.dice()).unwrap_or(0);
                     if scorable {
                         phase = Phase::Select;
                     } else {
@@ -685,6 +690,12 @@ fn main() -> ! {
                             count += 1;
                         }
                     }
+                    // Nothing marked: fall back to the die under the cursor so
+                    // a quick "Score" still works on the selected die.
+                    if count == 0 && selector < in_play {
+                        chosen[count] = selector;
+                        count += 1;
+                    }
                     match game.score_selected(&chosen[..count]) {
                         Ok(_) => {
                             selector = 0;
@@ -721,16 +732,10 @@ fn main() -> ! {
                         &values[..thrown],
                         &mut rng,
                     );
-                    // Start on the leftmost 1 or 5 if any rolled, and mark that
-                    // die so "Score" removes it straight away.
+                    // Start the cursor on the leftmost 1 or 5 if any rolled.
+                    // Nothing is pre-marked; Score falls back to the cursor die.
                     marked = [false; DICE_COUNT];
-                    match first_scorable(game.dice()) {
-                        Some(index) => {
-                            selector = index;
-                            marked[index] = true;
-                        }
-                        None => selector = 0,
-                    }
+                    selector = first_scorable(game.dice()).unwrap_or(0);
                     if scorable {
                         phase = Phase::Select;
                     } else {
@@ -817,25 +822,45 @@ fn main() -> ! {
         let count = dice.len();
         match phase {
             Phase::Select => {
-                // All dice share one centre so the active die grows in place
-                // instead of shifting when it gets larger. 120 is the middle of
-                // the 240-tall display, so the row sits vertically centred.
+                // All dice share one row centre. 120 is the middle of the
+                // 240-tall display.
                 const CENTER_Y: i32 = 120;
+                // Ease each die's lift toward its target (marked = up) so
+                // marking/unmarking glides smoothly but quickly.
+                for index in 0..count {
+                    let target = if marked[index] { DIE_LIFT } else { 0 };
+                    let mut l = lift[index];
+                    let diff = target - l;
+                    if diff != 0 {
+                        l += diff * 3 / 5;
+                        if (target - l).abs() < 2 {
+                            l = target;
+                        }
+                        lift[index] = l;
+                    }
+                }
                 for index in 0..count {
                     let x = die_slot(count, index);
                     let selected = index == selector;
                     let marked_die = marked[index];
-                    let size = if selected {
-                        DIE + 10
-                    } else if marked_die {
-                        DIE + 4
+                    let y = CENTER_Y - lift[index];
+                    // Marked dice shrink and sit above; the cursor die is
+                    // enlarged. Marking takes precedence so the change shows
+                    // immediately.
+                    let size = if marked_die {
+                        DIE
+                    } else if selected {
+                        DIE + 12
                     } else {
                         DIE - 8
                     };
-                    draw_die(&mut canvas, x, CENTER_Y, size, dice[index]);
-                    if marked_die {
-                        draw_centered(&mut canvas, CENTER_Y + size / 2 + 6, "*", slso8::ORANGE);
-                    }
+                    // Dies marked for scoring get a bright orange border.
+                    let outline = if marked_die {
+                        slso8::ORANGE
+                    } else {
+                        slso8::BURNT
+                    };
+                    draw_die(&mut canvas, x, y, size, dice[index], outline);
                 }
             }
             Phase::AwaitRoll => {
