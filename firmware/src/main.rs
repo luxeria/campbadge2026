@@ -584,7 +584,7 @@ fn main() -> ! {
     let framebuffer = unsafe { &mut *(&raw mut FRAMEBUFFER) };
     let mut canvas = Canvas::new(framebuffer);
 
-    let mut rng = Prng::new(0xd1ce);
+    let mut rng = Prng::new(esp_hal::rng::Rng::new().random());
     let mut game = Game::new();
     let mut input = Input::new();
     let mut now_ms: u32 = 0;
