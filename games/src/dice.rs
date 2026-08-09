@@ -190,6 +190,22 @@ impl Game {
         if gained == 0 {
             return Err(SelectError::NoScore);
         }
+        // Reject selections that silently carry a worthless die (e.g. a 3
+        // tucked next to a 1 and a 5): every chosen die must actually add
+        // points, otherwise that dead die would leave play for free.
+        for drop in 0..count {
+            let mut reduced = [0u8; DICE_COUNT];
+            let mut reduced_count = 0;
+            for (index, &value) in values[..count].iter().enumerate() {
+                if index != drop {
+                    reduced[reduced_count] = value;
+                    reduced_count += 1;
+                }
+            }
+            if dice_score(&reduced[..reduced_count]) == gained {
+                return Err(SelectError::NoScore);
+            }
+        }
         self.turn_score += gained;
 
         // Remove the chosen dice and compact the remainder.
@@ -343,13 +359,27 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_cannot_carry_a_dead_die() {
+        let mut game = Game::new();
+        game.dice = [1, 3, 5, 2, 6];
+        game.dice_count = 5;
+        // A worthless 3 cannot be scored just because it sits next to a 1
+        // and a 5: it would leave play without adding any points.
+        assert_eq!(game.score_selected(&[0, 1, 2]), Err(SelectError::NoScore));
+        // The same dice score fine without the dead 3.
+        assert_eq!(game.score_selected(&[0, 2]).unwrap(), 150);
+    }
+
+    #[test]
     fn hot_dice_reset_to_five() {
         let mut game = Game::new();
-        game.dice = [1, 5, 2, 6, 3];
+        // Three ones (1000) + two fives (100): every die scores, so all five
+        // leave play and the turn resets to a fresh five (hot dice).
+        game.dice = [1, 1, 1, 5, 5];
         game.dice_count = 5;
         game.score_selected(&[0, 1, 2, 3, 4]).unwrap();
         assert_eq!(game.dice_count(), DICE_COUNT);
-        assert_eq!(game.turn_score(), 150); // 1 + 5 scored, rest unused
+        assert_eq!(game.turn_score(), 1100);
     }
 
     #[test]

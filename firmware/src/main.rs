@@ -438,7 +438,6 @@ fn main() -> ! {
 
     loop {
         now_ms = now_ms.wrapping_add(33);
-
         let port0 = read_expander_register(&mut i2c, expander, REG_INPUT_0);
         let active_mask = !port0;
         input.update(active_mask, now_ms);
@@ -462,7 +461,9 @@ fn main() -> ! {
                     let thrown = game.dice_count();
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
-                    values[..thrown].copy_from_slice(game.dice());
+                    // Slice to the pre-throw count: on a farkle the game resets
+                    // its full pool but keeps the just-rolled dice in place.
+                    values[..thrown].copy_from_slice(&game.dice()[..thrown]);
                     animate_roll(
                         &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
                         &values[..thrown], &mut rng,
@@ -513,7 +514,9 @@ fn main() -> ! {
                     let thrown = game.dice_count();
                     let scorable = game.throw(&mut rng);
                     let mut values = [0u8; DICE_COUNT];
-                    values[..thrown].copy_from_slice(game.dice());
+                    // Slice to the pre-throw count: on a farkle the game resets
+                    // its full pool but keeps the just-rolled dice in place.
+                    values[..thrown].copy_from_slice(&game.dice()[..thrown]);
                     animate_roll(
                         &mut canvas, &mut spi, &mut dc, &mut cs, &mut delay,
                         &values[..thrown], &mut rng,
