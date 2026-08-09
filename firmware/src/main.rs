@@ -25,6 +25,8 @@ use raylib_camp::rand::Prng;
 
 use games::dice::{slso8, Game, DICE_COUNT};
 
+mod expander;
+
 // Embeds an ESP-IDF application descriptor so `espflash` can flash the binary.
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -42,6 +44,16 @@ const LED_PINS_INPUT: u8 = 0xfe;
 
 /// GC9A01A display reset lives on expander pin P1.0.
 const DISPLAY_RESET_BIT: u8 = 0x01;
+
+/// LED marking the player on the left seat (the board's bottom-left LED).
+const PLAYER_A_LED: expander::Led = expander::Led::Green;
+/// LED marking the player on the right seat (the board's bottom-right LED).
+const PLAYER_B_LED: expander::Led = expander::Led::Yellow;
+
+/// Number of quick BTN7 presses that reset the whole game.
+const RESET_PRESS_COUNT: u32 = 3;
+/// How long a full BTN7 press sequence may take before it is discarded.
+const RESET_PRESS_WINDOW_MS: u32 = 700;
 
 /// Framebuffer backing storage (RGB565), big enough for the whole panel.
 static mut FRAMEBUFFER: [u16; display::PIXEL_COUNT] = [0; display::PIXEL_COUNT];
@@ -564,6 +576,11 @@ fn main() -> ! {
         .expect("release display reset");
     delay.delay_millis(120);
 
+    // Shadow the port 1 registers at their end-of-bring-up state so the LED
+    // driver can toggle individual pins without unreliable register reads.
+    let mut config1 = LED_PINS_INPUT;
+    let mut output1 = DISPLAY_RESET_BIT;
+
     let mut spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -601,6 +618,11 @@ fn main() -> ! {
     // Current vertical lift of each die, eased toward its target each frame
     // so moving the cursor looks smooth and fast.
     let mut lift = [0i32; DICE_COUNT];
+    // Bookkeeping for the BTN7 triple-press reset.
+    let mut reset_last_press_ms: u32 = 0;
+    let mut reset_press_count: u32 = 0;
+    // Whose seat LED is lit; advances only when a finished turn hands over.
+    let mut active_player: usize = 0;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -618,6 +640,29 @@ fn main() -> ! {
         }
 
         let in_play = game.dice_count();
+
+        // Triple-tapping BTN7 resets the whole game from any phase.
+        if input.just_pressed(Button::Btn7) {
+            reset_press_count = if now_ms.wrapping_sub(reset_last_press_ms) <= RESET_PRESS_WINDOW_MS
+            {
+                reset_press_count + 1
+            } else {
+                1
+            };
+            reset_last_press_ms = now_ms;
+            if reset_press_count >= RESET_PRESS_COUNT {
+                reset_press_count = 0;
+                game = Game::new();
+                selector = 0;
+                marked = [false; DICE_COUNT];
+                lift = [0i32; DICE_COUNT];
+                turnover_frames = 0;
+                last_farkle = false;
+                active_player = 0;
+                phase = Phase::AwaitRoll;
+                log_line(&mut tx, "badge: game reset by BTN7 triple-press\n");
+            }
+        }
 
         // --- Input handling per phase ---
         match phase {
@@ -772,6 +817,7 @@ fn main() -> ! {
                     lift = [0i32; DICE_COUNT];
                     turnover_frames = 0;
                     last_farkle = false;
+                    active_player = 0;
                     phase = Phase::AwaitRoll;
                 }
             }
@@ -785,6 +831,9 @@ fn main() -> ! {
                     turnover_frames = 0;
                     selector = 0;
                     marked = [false; DICE_COUNT];
+                    // The next player takes the table only once the score screen
+                    // is dismissed, so their LED lights on the hand-off.
+                    active_player = game.current_player();
                     // Someone reached the winning score: end the game instead of
                     // starting another turn.
                     phase = if game.winner().is_some() {
@@ -807,6 +856,25 @@ fn main() -> ! {
         let current_player = game.current_player();
         let active = slso8::ORANGE;
         let idle = slso8::MAUVE;
+
+        // Light the seat LED of whoever is at the table (player A bottom-left,
+        // player B bottom-right); the other player's LED stays off.
+        expander::set_led(
+            &mut i2c,
+            expander,
+            &mut config1,
+            &mut output1,
+            PLAYER_A_LED,
+            active_player == 0,
+        );
+        expander::set_led(
+            &mut i2c,
+            expander,
+            &mut config1,
+            &mut output1,
+            PLAYER_B_LED,
+            active_player == 1,
+        );
         canvas.draw_text(
             "A",
             8,
