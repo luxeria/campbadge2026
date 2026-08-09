@@ -269,6 +269,10 @@ pub mod slso8 {
     pub const PURPLE: Color = Color::rgb565(0x54, 0x4e, 0x68);
     /// Mauve.
     pub const MAUVE: Color = Color::rgb565(0x8d, 0x69, 0x7a);
+    /// Bright leaf green, the identity colour of player A (her LED).
+    pub const GREEN: Color = Color::rgb565(0x6a, 0xc0, 0x3a);
+    /// Muted olive green for player A's label when it is not her turn.
+    pub const GREEN_DIM: Color = Color::rgb565(0x3a, 0x6b, 0x2c);
     /// Burnt orange.
     pub const BURNT: Color = Color::rgb565(0xd0, 0x81, 0x59);
     /// Orange.

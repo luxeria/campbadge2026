@@ -140,7 +140,25 @@ impl<'a> Canvas<'a> {
     /// `scale` scales the glyph pixels as integer multiples. Characters outside
     /// the font's 32..255 range are silently skipped.
     pub fn draw_text(&mut self, string: &str, x: i32, y: i32, scale: i32, color: Color) {
+        self.draw_text_spaced(string, x, y, scale, 0, color);
+    }
+
+    /// Draws a string of text with whole-number scaling plus letter spacing.
+    ///
+    /// `letter_spacing` adds empty pixels after every glyph so neighbouring
+    /// characters do not touch, which is useful for densely-scrified text such
+    /// as scores and numbers at larger scales.
+    pub fn draw_text_spaced(
+        &mut self,
+        string: &str,
+        x: i32,
+        y: i32,
+        scale: i32,
+        letter_spacing: i32,
+        color: Color,
+    ) {
         let scale = scale.max(1);
+        let letter_spacing = letter_spacing.max(0);
         let mut cursor_x = x;
         for &byte in string.as_bytes() {
             if byte < FIRST_CHAR {
@@ -158,20 +176,107 @@ impl<'a> Canvas<'a> {
                     }
                 }
             }
-            cursor_x += (width as i32) * scale;
+            cursor_x += (width as i32) * scale + letter_spacing;
         }
     }
 
     /// Returns the pixel width a string occupies at the given scale.
     pub fn measure_text(&self, string: &str, scale: i32) -> i32 {
+        self.measure_text_spaced(string, scale, 0)
+    }
+
+    /// Returns the pixel width of a string at a scale plus letter spacing.
+    pub fn measure_text_spaced(&self, string: &str, scale: i32, letter_spacing: i32) -> i32 {
         let scale = scale.max(1);
-        let units = string
+        let letter_spacing = letter_spacing.max(0);
+        string
             .as_bytes()
             .iter()
             .filter(|&&byte| byte >= FIRST_CHAR)
-            .map(|&byte| CHAR_WIDTHS[(byte - FIRST_CHAR) as usize] as i32)
-            .sum::<i32>();
-        units * scale
+            .map(|&byte| CHAR_WIDTHS[(byte - FIRST_CHAR) as usize] as i32 * scale + letter_spacing)
+            .sum()
+    }
+
+    /// Draws a string of text scaled by any positive factor using thin strokes.
+    ///
+    /// Unlike [`Canvas::draw_text`], which only supports whole-number scaling,
+    /// this places each set font pixel as a single on-screen pixel at its
+    /// rounded scaled position and then bridges the gaps between adjacent set
+    /// pixels, so strokes stay one pixel wide and light without reading as
+    /// a dotted dot-matrix. `letter_spacing` adds empty pixels between glyphs.
+    ///
+    /// The spacing uses `+ 0.5` before the integer cast instead of the f32
+    /// rounding methods, which this allocation-free crate does not pull in.
+    pub fn draw_text_scaled(
+        &mut self,
+        string: &str,
+        x: i32,
+        y: i32,
+        scale: f32,
+        letter_spacing: i32,
+        color: Color,
+    ) {
+        let scale = scale.max(1.0);
+        let mut cursor_x = x;
+        for &byte in string.as_bytes() {
+            if byte < FIRST_CHAR {
+                continue;
+            }
+            let index = (byte - FIRST_CHAR) as usize;
+            let (source_x, source_y, width) = glyph_source(index);
+            // Lay down every set pixel as a one-pixel dot.
+            for row_offset in 0..GLYPH_HEIGHT {
+                for col_offset in 0..width {
+                    if atlas_pixel_is_set(source_x + col_offset, source_y + row_offset) {
+                        let dot_x = cursor_x + (col_offset as f32 * scale + 0.5) as i32;
+                        let dot_y = y + (row_offset as f32 * scale + 0.5) as i32;
+                        self.plot(dot_x, dot_y, color);
+                    }
+                }
+            }
+            // Bridge horizontally and vertically adjacent set pixels so the
+            // 1.5x pixel spacing does not leave visible gaps in each stroke.
+            for row_offset in 0..GLYPH_HEIGHT {
+                for col_offset in 0..width {
+                    if !atlas_pixel_is_set(source_x + col_offset, source_y + row_offset) {
+                        continue;
+                    }
+                    if col_offset + 1 < width
+                        && atlas_pixel_is_set(source_x + col_offset + 1, source_y + row_offset)
+                    {
+                        let from_x = cursor_x + (col_offset as f32 * scale + 0.5) as i32;
+                        let to_x = cursor_x + ((col_offset + 1) as f32 * scale + 0.5) as i32;
+                        let dot_y = y + (row_offset as f32 * scale + 0.5) as i32;
+                        self.fill_row(dot_y, from_x.min(to_x), from_x.max(to_x) + 1, color);
+                    }
+                    if row_offset + 1 < GLYPH_HEIGHT
+                        && atlas_pixel_is_set(source_x + col_offset, source_y + row_offset + 1)
+                    {
+                        let dot_x = cursor_x + (col_offset as f32 * scale + 0.5) as i32;
+                        let from_y = y + (row_offset as f32 * scale + 0.5) as i32;
+                        let to_y = y + ((row_offset + 1) as f32 * scale + 0.5) as i32;
+                        for pixel_y in from_y.min(to_y)..=from_y.max(to_y) {
+                            self.plot(dot_x, pixel_y, color);
+                        }
+                    }
+                }
+            }
+            cursor_x += (width as f32 * scale + 0.5) as i32 + letter_spacing;
+        }
+    }
+
+    /// Returns the pixel width a string occupies at a fractional scale.
+    pub fn measure_text_scaled(&self, string: &str, scale: f32, letter_spacing: i32) -> i32 {
+        let scale = scale.max(1.0);
+        string
+            .as_bytes()
+            .iter()
+            .filter(|&&byte| byte >= FIRST_CHAR)
+            .map(|&byte| {
+                let width = CHAR_WIDTHS[(byte - FIRST_CHAR) as usize] as f32;
+                (width * scale + 0.5) as i32 + letter_spacing
+            })
+            .sum()
     }
 }
 
@@ -205,6 +310,49 @@ mod tests {
             .filter(|&&p| p == palette::WHITE.raw())
             .count();
         assert!(painted > 0, "draw_text painted no pixels");
+    }
+
+    #[test]
+    fn scaled_measure_matches_integer_at_whole_scales() {
+        let mut storage = vec![0u16; display::PIXEL_COUNT];
+        let canvas = Canvas::new(&mut storage);
+        for scale in [1.0f32, 2.0, 3.0] {
+            assert_eq!(
+                canvas.measure_text_scaled("HELLO", scale, 0),
+                canvas.measure_text("HELLO", scale as i32),
+            );
+        }
+    }
+
+    #[test]
+    fn scaled_text_paints_pixels_at_fractional_scale() {
+        let mut storage = vec![0u16; display::PIXEL_COUNT];
+        let mut canvas = Canvas::new(&mut storage);
+        canvas.draw_text_scaled("Hi!", 10, 10, 1.5, 0, palette::WHITE);
+        let painted = storage
+            .iter()
+            .filter(|&&p| p == palette::WHITE.raw())
+            .count();
+        assert!(painted > 0, "scaled text painted no pixels");
+    }
+
+    #[test]
+    fn spaced_measure_grows_with_letter_spacing() {
+        let mut storage = vec![0u16; display::PIXEL_COUNT];
+        let canvas = Canvas::new(&mut storage);
+        assert_eq!(
+            canvas.measure_text_spaced("123", 1, 2),
+            canvas.measure_text("123", 1) + 3 * 2,
+        );
+    }
+
+    #[test]
+    fn spaced_text_paints_glyphs() {
+        let mut storage = vec![0u16; display::PIXEL_COUNT];
+        let mut canvas = Canvas::new(&mut storage);
+        canvas.draw_text_spaced("42", 0, 0, 2, 2, palette::RED);
+        let painted = storage.iter().filter(|&&p| p == palette::RED.raw()).count();
+        assert!(painted > 0, "spaced text painted no pixels");
     }
 
     #[test]

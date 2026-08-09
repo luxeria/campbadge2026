@@ -67,6 +67,16 @@ const SLOT_SPACING: i32 = 46;
 const FARKLE_HOLD_FRAMES: u32 = 60;
 /// How many pixels the selected die lifts above the row (animated smoothly).
 const DIE_LIFT: i32 = 14;
+/// Scale of the button-hint lines at the bottom of the screen.
+const HELP_SCALE: f32 = 1.5;
+/// Extra empty pixels between glyphs in the button-hint lines.
+const HELP_LETTER_SPACING: i32 = 2;
+/// Extra empty pixels between digits in scores and other numbers.
+const NUMBER_SPACING: i32 = 2;
+/// Scale of the big turn-indicator letter under the score.
+const ACTIVE_PLAYER_SCALE: i32 = 2;
+/// Button that toggles the on-screen button-hint text.
+const HELP_TOGGLE_BUTTON: Button = Button::Btn5;
 
 /// Emits a log line without ever blocking the caller.
 fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
@@ -271,18 +281,47 @@ fn draw_number(canvas: &mut Canvas, x: i32, y: i32, value: u32, color: Color, sc
     }
     buffer[..n].reverse();
     if let Ok(text) = core::str::from_utf8(&buffer[..n]) {
-        let text_width = canvas.measure_text(text, scale);
-        canvas.draw_text(text, x - text_width / 2, y, scale, color);
+        let text_width = canvas.measure_text_spaced(text, scale, NUMBER_SPACING);
+        canvas.draw_text_spaced(text, x - text_width / 2, y, scale, NUMBER_SPACING, color);
     }
 }
 
-/// Centred one-line helper label.
-fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
-    let text_width = canvas.measure_text(text, 1);
-    canvas.draw_text(text, 120 - text_width / 2, y, 1, color);
+/// Centres `text` on the display horizontally at the given `scale` and spacing.
+fn draw_centered_scaled(
+    canvas: &mut Canvas,
+    y: i32,
+    text: &str,
+    scale: f32,
+    letter_spacing: i32,
+    color: Color,
+) {
+    let text_width = canvas.measure_text_scaled(text, scale, letter_spacing);
+    canvas.draw_text_scaled(text, 120 - text_width / 2, y, scale, letter_spacing, color);
 }
 
-/// Draws a short `P<n>` player label centred on the given point.
+/// Centred one-line helper label at the base size.
+fn draw_centered(canvas: &mut Canvas, y: i32, text: &str, color: Color) {
+    draw_centered_scaled(canvas, y, text, 1.0, 0, color);
+}
+
+/// Text colour marking a player's label.
+///
+/// Player A is drawn green to match her bottom-left LED, player B keeps the
+/// warm orange theme; the player whose turn or bank it is stays brighter.
+fn player_color(player: usize, highlighted: bool) -> Color {
+    if player == 0 {
+        if highlighted {
+            slso8::GREEN
+        } else {
+            slso8::GREEN_DIM
+        }
+    } else if highlighted {
+        slso8::ORANGE
+    } else {
+        slso8::MAUVE
+    }
+}
+
 /// Draws a centred `A  <score>` style ledger line for one player.
 fn draw_ledger(
     canvas: &mut Canvas,
@@ -312,8 +351,8 @@ fn draw_ledger(
     digits[..n].reverse();
     buffer[3..3 + n].copy_from_slice(&digits[..n]);
     if let Ok(text) = core::str::from_utf8(&buffer[..3 + n]) {
-        let text_width = canvas.measure_text(text, scale);
-        canvas.draw_text(text, cx - text_width / 2, y, scale, color);
+        let text_width = canvas.measure_text_spaced(text, scale, NUMBER_SPACING);
+        canvas.draw_text_spaced(text, cx - text_width / 2, y, scale, NUMBER_SPACING, color);
     }
 }
 
@@ -623,6 +662,8 @@ fn main() -> ! {
     let mut reset_press_count: u32 = 0;
     // Whose seat LED is lit; advances only when a finished turn hands over.
     let mut active_player: usize = 0;
+    // Whether the on-screen button hints are shown (toggled by holding B5).
+    let mut help_visible: bool = false;
 
     loop {
         now_ms = now_ms.wrapping_add(33);
@@ -640,6 +681,11 @@ fn main() -> ! {
         }
 
         let in_play = game.dice_count();
+
+        // Holding the help button toggles the on-screen button hints.
+        if input.just_pressed(HELP_TOGGLE_BUTTON) {
+            help_visible = !help_visible;
+        }
 
         // Triple-tapping BTN7 resets the whole game from any phase.
         if input.just_pressed(Button::Btn7) {
@@ -852,10 +898,8 @@ fn main() -> ! {
         // --- Render ---
         canvas.clear(slso8::NAVY);
 
-        // Both players' banked totals, active one lit orange + underlined.
+        // Both players' banked totals, active one underlined.
         let current_player = game.current_player();
-        let active = slso8::ORANGE;
-        let idle = slso8::MAUVE;
 
         // Light the seat LED of whoever is at the table (player A bottom-left,
         // player B bottom-right); the other player's LED stays off.
@@ -875,36 +919,37 @@ fn main() -> ! {
             PLAYER_B_LED,
             active_player == 1,
         );
-        canvas.draw_text(
-            "A",
-            8,
-            4,
-            1,
-            if current_player == 0 { active } else { idle },
-        );
+        canvas.draw_text("A", 8, 4, 1, player_color(0, current_player == 0));
         draw_number(&mut canvas, 34, 4, game.score(0), slso8::CREAM, 1);
-        canvas.draw_text(
-            "B",
-            188,
-            4,
-            1,
-            if current_player == 1 { active } else { idle },
-        );
+        canvas.draw_text("B", 188, 4, 1, player_color(1, current_player == 1));
         draw_number(&mut canvas, 214, 4, game.score(1), slso8::CREAM, 1);
         let active_x = if current_player == 0 { 8 } else { 188 };
-        canvas.rect(active_x, 14, 24, 2, slso8::ORANGE);
+        let underline = if current_player == 0 {
+            slso8::GREEN
+        } else {
+            slso8::ORANGE
+        };
+        canvas.rect(active_x, 14, 24, 2, underline);
 
         // The turn's accounting sits above the dice row, out of the way.
         draw_centered(&mut canvas, 18, "TURN", slso8::PEACH);
-        draw_number(&mut canvas, 120, 32, game.turn_score(), slso8::CREAM, 2);
 
-        // Just below the turn score, name the player currently at the table.
-        let playing: &str = if current_player == 0 {
-            "PLAYING  A"
+        // Just above the turn score, show whose turn it is as a large letter.
+        let playing: &str = if current_player == 0 { "A" } else { "B" };
+        let playing_color = if current_player == 0 {
+            slso8::GREEN
         } else {
-            "PLAYING  B"
+            slso8::PEACH
         };
-        draw_centered(&mut canvas, 54, playing, slso8::PEACH);
+        let playing_width = canvas.measure_text(playing, ACTIVE_PLAYER_SCALE);
+        canvas.draw_text(
+            playing,
+            120 - playing_width / 2,
+            30,
+            ACTIVE_PLAYER_SCALE,
+            playing_color,
+        );
+        draw_number(&mut canvas, 120, 54, game.turn_score(), slso8::CREAM, 2);
 
         let dice = game.dice();
         let count = dice.len();
@@ -964,16 +1009,46 @@ fn main() -> ! {
         } else {
             match phase {
                 Phase::AwaitRoll => {
-                    if game.turn_score() > 0 {
+                    if help_visible && game.turn_score() > 0 {
                         // Hot dice: roll all five again or bank.
-                        draw_centered(&mut canvas, 186, "ROLL B6 . BANK B8", slso8::PEACH);
-                    } else {
-                        draw_centered(&mut canvas, 186, "ROLL (B6)", slso8::CREAM);
+                        draw_centered_scaled(
+                            &mut canvas,
+                            186,
+                            "ROLL B6 . BANK B8",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::PEACH,
+                        );
+                    } else if help_visible {
+                        draw_centered_scaled(
+                            &mut canvas,
+                            186,
+                            "ROLL B6",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::CREAM,
+                        );
                     }
                 }
                 Phase::Select => {
-                    draw_centered(&mut canvas, 172, "MARK B2 . SCORE B4", slso8::PEACH);
-                    draw_centered(&mut canvas, 184, "ROLL B6 . BANK B8", slso8::PEACH);
+                    if help_visible {
+                        draw_centered_scaled(
+                            &mut canvas,
+                            168,
+                            "MARK B2 . SCORE B4",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::PEACH,
+                        );
+                        draw_centered_scaled(
+                            &mut canvas,
+                            188,
+                            "ROLL B6 . BANK B8",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::PEACH,
+                        );
+                    }
                 }
                 Phase::TurnOver => {
                     if last_farkle {
@@ -989,7 +1064,7 @@ fn main() -> ! {
                     }
                     // Both players' banked totals, the one who just went lit.
                     for player in 0..2 {
-                        let color = if player == last_banker { active } else { idle };
+                        let color = player_color(player, player == last_banker);
                         let line_y = 154 + player as i32 * 24;
                         draw_ledger(
                             &mut canvas,
@@ -1001,7 +1076,16 @@ fn main() -> ! {
                             color,
                         );
                     }
-                    draw_centered(&mut canvas, 212, "NEXT - B8", slso8::CREAM);
+                    if help_visible {
+                        draw_centered_scaled(
+                            &mut canvas,
+                            212,
+                            "NEXT B8",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::CREAM,
+                        );
+                    }
                 }
                 Phase::Winner => {
                     // Big "WINNER!", the champion, and their score.
@@ -1009,9 +1093,18 @@ fn main() -> ! {
                     let text = "WINNER!";
                     let text_width = canvas.measure_text(text, 3);
                     canvas.draw_text(text, 120 - text_width / 2, 100, 3, slso8::ORANGE);
-                    let color = if winner == last_banker { active } else { idle };
+                    let color = player_color(winner, winner == last_banker);
                     draw_ledger(&mut canvas, 120, 150, winner, game.score(winner), 2, color);
-                    draw_centered(&mut canvas, 200, "B8 NEW GAME", slso8::CREAM);
+                    if help_visible {
+                        draw_centered_scaled(
+                            &mut canvas,
+                            200,
+                            "NEW GAME B8",
+                            HELP_SCALE,
+                            HELP_LETTER_SPACING,
+                            slso8::CREAM,
+                        );
+                    }
                 }
             }
         }
