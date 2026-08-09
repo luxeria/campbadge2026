@@ -434,6 +434,8 @@ enum Phase {
     Select,
     /// The turn ended (banked or farkle); waiting to continue.
     TurnOver,
+    /// The game is over; a player reached the winning score.
+    Winner,
 }
 
 /// Animates `final_values` tumbling chaotically before settling into their slots.
@@ -761,6 +763,18 @@ fn main() -> ! {
                     phase = Phase::TurnOver;
                 }
             }
+            Phase::Winner => {
+                // B8 starts a fresh game.
+                if input.just_pressed(Button::Btn8) {
+                    game = Game::new();
+                    selector = 0;
+                    marked = [false; DICE_COUNT];
+                    lift = [0i32; DICE_COUNT];
+                    turnover_frames = 0;
+                    last_farkle = false;
+                    phase = Phase::AwaitRoll;
+                }
+            }
             _ => {
                 // A farkle hands over automatically after a short beat; a bank
                 // keeps waiting for B8 so the banked amount can be read.
@@ -771,7 +785,13 @@ fn main() -> ! {
                     turnover_frames = 0;
                     selector = 0;
                     marked = [false; DICE_COUNT];
-                    phase = Phase::AwaitRoll;
+                    // Someone reached the winning score: end the game instead of
+                    // starting another turn.
+                    phase = if game.winner().is_some() {
+                        Phase::Winner
+                    } else {
+                        Phase::AwaitRoll
+                    };
                 }
             }
         }
@@ -914,6 +934,16 @@ fn main() -> ! {
                         );
                     }
                     draw_centered(&mut canvas, 212, "NEXT - B8", slso8::CREAM);
+                }
+                Phase::Winner => {
+                    // Big "WINNER!", the champion, and their score.
+                    let winner = game.winner().unwrap_or(0);
+                    let text = "WINNER!";
+                    let text_width = canvas.measure_text(text, 3);
+                    canvas.draw_text(text, 120 - text_width / 2, 100, 3, slso8::ORANGE);
+                    let color = if winner == last_banker { active } else { idle };
+                    draw_ledger(&mut canvas, 120, 150, winner, game.score(winner), 2, color);
+                    draw_centered(&mut canvas, 200, "B8 NEW GAME", slso8::CREAM);
                 }
             }
         }
