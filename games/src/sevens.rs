@@ -557,8 +557,10 @@ mod tests {
             other => panic!("opening should play cleanly, got {other:?}"),
         }
         assert!(!game.round_over());
-        // That suit's pile is now open.
-        assert!(game.pile_state(opener.suit.index()).is_some());
+        assert!(
+            game.pile_state(opener.suit.index()).is_some(),
+            "That suit's pile is now open."
+        );
     }
 
     #[test]
@@ -574,7 +576,9 @@ mod tests {
         let outcome = game.play(legal_card).unwrap();
         assert_eq!(outcome, PlayOutcome::RoundFinished);
         assert!(game.round_over());
-        // The player who finished scores nothing; the others score their hands.
-        assert!(game.scores[current] == 0);
+        assert!(
+            game.scores[current] == 0,
+            "The player who finished scores nothing; the others score their hands."
+        );
     }
 }

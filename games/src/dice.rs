@@ -298,8 +298,8 @@ mod tests {
     #[test]
     fn n_of_a_kind_scoring() {
         assert_eq!(dice_score(&[2, 2, 2]), 200);
-        assert_eq!(dice_score(&[2, 2, 2, 2]), 400); // 4 twos: 2*100*2
-        assert_eq!(dice_score(&[4, 4, 4, 4]), 800); // 4 fours: 4*100*2
+        assert_eq!(dice_score(&[2, 2, 2, 2]), 400, "4 twos: 2*100*2");
+        assert_eq!(dice_score(&[4, 4, 4, 4]), 800, "4 fours: 4*100*2");
         assert_eq!(dice_score(&[6, 6, 6, 6, 6]), 1800);
         assert_eq!(dice_score(&[1, 1, 1]), 1000);
         assert_eq!(dice_score(&[1, 1, 1, 1]), 2000);
@@ -308,15 +308,15 @@ mod tests {
 
     #[test]
     fn n_of_a_kind_with_leftovers() {
-        assert_eq!(dice_score(&[3, 3, 3, 1, 5]), 450); // 300 + 100 + 50
+        assert_eq!(dice_score(&[3, 3, 3, 1, 5]), 450, "300 + 100 + 50");
     }
 
     #[test]
     fn streets_score() {
         assert_eq!(dice_score(&[1, 2, 3, 4, 5]), 1000);
         assert_eq!(dice_score(&[2, 3, 4, 5, 6]), 1000);
-        assert_eq!(dice_score(&[1, 2, 3, 4, 6]), 500); // small street + lone 6
-        assert_eq!(dice_score(&[1, 2, 3, 4]), 500); // four dice small street
+        assert_eq!(dice_score(&[1, 2, 3, 4, 6]), 500, "small street + lone 6");
+        assert_eq!(dice_score(&[1, 2, 3, 4]), 500, "four dice small street");
     }
 
     #[test]
@@ -333,9 +333,9 @@ mod tests {
         game.dice = [1, 1, 1, 5, 2];
         game.dice_count = 5;
         let gained = game.score_selected(&[0, 1, 2, 3]).unwrap();
-        assert_eq!(gained, 1050); // three ones (1000) + one five (50)
+        assert_eq!(gained, 1050, "three ones (1000) + one five (50)");
         assert_eq!(game.turn_score(), 1050);
-        assert_eq!(game.dice_count(), 1); // only the 2 remains
+        assert_eq!(game.dice_count(), 1, "only the 2 remains");
     }
 
     #[test]
@@ -346,7 +346,6 @@ mod tests {
         game.score_selected(&[0, 1, 2, 3]).unwrap();
         assert_eq!(game.dice_count(), 1);
 
-        // A single leftover die that rolls a non-scorable face farkles.
         let mut seed = 1u32;
         loop {
             let mut probe = Prng::new(seed);
@@ -356,10 +355,16 @@ mod tests {
             }
             seed += 1;
         }
-        assert!(!game.throw(&mut Prng::new(seed)));
+        assert!(
+            !game.throw(&mut Prng::new(seed)),
+            "A single leftover die that rolls a non-scorable face farkles."
+        );
 
-        // The next player starts from a full five dice, not the leftover one.
-        assert_eq!(game.dice_count(), DICE_COUNT);
+        assert_eq!(
+            game.dice_count(),
+            DICE_COUNT,
+            "The next player starts from a full five dice, not the leftover one."
+        );
     }
 
     #[test]
@@ -367,11 +372,16 @@ mod tests {
         let mut game = Game::new();
         game.dice = [1, 3, 5, 2, 6];
         game.dice_count = 5;
-        // A worthless 3 cannot be scored just because it sits next to a 1
-        // and a 5: it would leave play without adding any points.
-        assert_eq!(game.score_selected(&[0, 1, 2]), Err(SelectError::NoScore));
-        // The same dice score fine without the dead 3.
-        assert_eq!(game.score_selected(&[0, 2]).unwrap(), 150);
+        assert_eq!(
+            game.score_selected(&[0, 1, 2]),
+            Err(SelectError::NoScore),
+            "A worthless 3 cannot be scored just because it sits next to a 1 and a 5: it would leave play without adding any points."
+        );
+        assert_eq!(
+            game.score_selected(&[0, 2]).unwrap(),
+            150,
+            "The same dice score fine without the dead 3."
+        );
     }
 
     #[test]
@@ -473,7 +483,7 @@ mod tests {
         assert_eq!(game.dice(), &[6, 6, 6]);
         let g2 = game.score_selected(&[0, 1, 2]).unwrap();
         assert_eq!(g2, 600);
-        assert_eq!(game.dice_count(), DICE_COUNT); // hot dice after clearing all
+        assert_eq!(game.dice_count(), DICE_COUNT, "hot dice after clearing all");
         assert_eq!(game.turn_score(), 700);
     }
 }
