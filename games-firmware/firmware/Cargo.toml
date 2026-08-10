@@ -3,6 +3,13 @@ name = "firmware"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["dice"]
+demo = []
+snake = []
+seven = []
+dice = []
+
 [dependencies]
 esp-backtrace = { version = "0.19", features = ["esp32s3", "panic-handler", "println"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
