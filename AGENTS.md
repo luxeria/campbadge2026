@@ -42,10 +42,10 @@ Xtensa toolchain is on the PATH.
 
 ```sh
 source "$HOME/export-esp.sh"   # configures the Xtensa toolchain for this shell
-cd firmware
+cd games-firmware/firmware
 cargo build --release
 cd ..
-espflash flash target/xtensa-esp32s3-none-elf/release/firmware --monitor
+espflash flash games-firmware/target/xtensa-esp32s3-none-elf/release/firmware --monitor
 ```
 
 `espflash` auto-detects the connected board; pass `--port` (e.g. `/dev/ttyUSB0`,
