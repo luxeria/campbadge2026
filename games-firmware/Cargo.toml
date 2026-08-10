@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "raylib_camp",
+    "firmware",
+    "games",
+]
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
