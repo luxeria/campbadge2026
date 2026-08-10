@@ -39,7 +39,7 @@ fn draw_score(canvas: &mut Canvas, score: usize) {
 }
 
 /// Plays the snake game until power is removed.
-pub fn main_snake(mut board: Board) -> ! {
+pub fn main(mut board: Board) -> ! {
     let mut snake = Snake::new(0x5eed);
     let mut tick_accum: u32 = 0;
     let mut game_over = false;

@@ -1,7 +1,7 @@
 //! The Farkle/dice game firmware, driven by the [`Game`] engine hot-seat logic.
 //!
 //! Two players pass the badge around; each throws, picks scoring dice, rolls
-//! the leftovers and banks. This module hosts the `main_dice` entry point and
+//! the leftovers and banks. This module hosts the [`main`] entry point and
 //! splits the formerly-monolithic loop into discrete steps: input handling per
 //! phase, rendering, and scheduled result sounds.
 
@@ -523,7 +523,7 @@ impl DiceGame {
 }
 
 /// Plays the selected dice game until power is removed.
-pub fn main_dice(mut board: Board) -> ! {
+pub fn main(mut board: Board) -> ! {
     let mut app = DiceGame::new();
     buzzer::play_startup(&board.ledc, &mut board.delay);
     loop {

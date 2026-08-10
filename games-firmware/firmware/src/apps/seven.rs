@@ -196,7 +196,7 @@ fn draw_hand_rack(canvas: &mut Canvas, cards: &[Card], cursor: usize, game: &Gam
 }
 
 /// Plays Sevens until power is removed.
-pub fn main_seven(mut board: Board) -> ! {
+pub fn main(mut board: Board) -> ! {
     let mut rng = Prng::new(0x53e7);
     let mut game = Game::new(&mut rng);
     let mut hand_cursor: usize = 0;

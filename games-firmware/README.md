@@ -14,18 +14,19 @@ Rust firmware and game logic for the LuxCamp badge (M5Stack Atom S3 Lite).
 
 The `firmware` crate compiles exactly one game per build, chosen by a feature:
 
-| feature | game       | module           |
-|---------|------------|------------------|
-| `dice`  | Farkle     | `firmware_dice`  |
-| `snake` | Snake      | `firmware_snake` |
-| `seven` | Sevens     | `firmware_seven` |
-| `demo`  | demo scene | `firmware_demo`  |
+| feature | game       | module      |
+|---------|------------|-------------|
+| `dice`  | Farkle     | `apps::dice`  |
+| `snake` | Snake      | `apps::snake`  |
+| `seven` | Sevens     | `apps::seven`  |
+| `demo`  | demo scene | `apps::demo`  |
 
-`dice` is the default. Each module sits behind its feature gate and defines one
-entry point (`main_dice`, `main_snake`, ...). `firmware/src/board.rs`
-initialises the shared hardware (SPI display, I2C expander, framebuffer) once
-and hands a `Board` to the chosen game. Only the enabled game is compiled, so
-the buzzer/expander/LED wiring (used by Farkle) stays out of the other builds.
+`dice` is the default. Each module lives under `firmware/src/apps/` behind its
+feature gate and defines one entry point (`apps::dice::main`, ...).
+`firmware/src/board.rs` initialises the shared hardware (SPI display, I2C
+expander, framebuffer) once and hands a `Board` to the chosen game. Only the
+enabled game is compiled, so the buzzer/expander/LED wiring (used by Farkle)
+stays out of the other builds.
 
 The `games` crate contains:
 
@@ -33,15 +34,22 @@ The `games` crate contains:
 - `snake`: small example game
 - `sevens`: WIP — the Sevens (Fan Tan / Parliament) card game, unfinished
 
-## Build / flash / test
+## Build / flash
 
-Read the `Makefile`
+Use the `Makefile` from this directory. The `GAME` variable selects the game
+(one of `dice`, `snake`, `seven`, `demo`); `dice` is the default.
+
 ```sh
-espflash flash --monitor target/xtensa-esp32s3-none-elf/release/firmware
+make build              # default: dice
+make flash              # build + flash dice
+
+export GAME=snake       # switch game
+make flash              # build + flash snake
 ```
 
-`espflash` auto-detects the board; pass `--port` only if several serial devices
-make it ambiguous.
+`make install-toolchain` sets up the Xtensa toolchain once. `espflash`
+auto-detects the board; pass `--port` only if several serial devices make it
+ambiguous.
 
 ## Tests
 

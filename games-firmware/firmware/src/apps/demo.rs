@@ -22,7 +22,7 @@ fn draw_demo_scene(canvas: &mut Canvas) {
 }
 
 /// Plays the interactive demo until power is removed.
-pub fn main_demo(mut board: Board) -> ! {
+pub fn main(mut board: Board) -> ! {
     const CENTRE: (f32, f32) = (120.0, 120.0);
     const BOUNDARY: f32 = 92.0;
 
