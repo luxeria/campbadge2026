@@ -23,6 +23,10 @@ use esp_hal::ledc::{Ledc, LowSpeed};
 use esp_hal::time::Rate;
 
 /// The buzzer's GPIO number on the badge.
+#[cfg(feature = "esp32")]
+const BUZZER_PIN: u8 = 26;
+/// The buzzer's GPIO number on the badge.
+#[cfg(feature = "esp32s3")]
 const BUZZER_PIN: u8 = 2;
 /// Square-wave duty of a beep, as a percentage. Below 50% makes the passive
 /// buzzer quieter since it only has a 50% "full" square wave available.
