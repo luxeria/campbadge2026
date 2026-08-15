@@ -12,7 +12,8 @@ use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
-use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagTx};
+
+use esp_println::println;
 
 use raylib_camp::canvas::{display, Canvas};
 use raylib_camp::input::Input;
@@ -48,9 +49,6 @@ pub struct Board {
     pub input: Input,
     /// Millisecond clock, advanced by each call to [`Board::frame`].
     pub now_ms: u32,
-    /// Serial logging sink (non-blocking).
-    #[cfg(feature = "dice")]
-    pub tx: UsbSerialJtagTx<'static, esp_hal::Blocking>,
     /// Blocking delay provider.
     pub delay: Delay,
     /// I2C bus to the expander.
@@ -71,22 +69,10 @@ pub struct Board {
     output1: u8,
 }
 
-/// Emits a log line without ever blocking the caller.
-pub fn log_line(tx: &mut UsbSerialJtagTx<'_, esp_hal::Blocking>, line: &str) {
-    for byte in line.bytes() {
-        if tx.write_byte_nb(byte).is_err() {
-            break;
-        }
-    }
-    let _ = tx.flush_tx_nb();
-}
-
 impl Board {
     /// Brings up every peripheral the badge firmware needs.
     pub fn new() -> Self {
         let peripherals = esp_hal::init(esp_hal::Config::default());
-        let usb = UsbSerialJtag::new(peripherals.USB_DEVICE);
-        let (_rx, mut tx) = usb.split();
         let mut delay = Delay::new();
 
         #[cfg(feature = "dice")]
@@ -96,16 +82,21 @@ impl Board {
             ledc
         };
 
-        let mut i2c = I2c::new(
+        let i2c = I2c::new(
             peripherals.I2C0,
             I2cConfig::default().with_frequency(Rate::from_khz(400)),
         )
-        .expect("configure I2C")
-        .with_sda(peripherals.GPIO38)
-        .with_scl(peripherals.GPIO39);
+        .expect("configure I2C");
+
+        #[cfg(feature = "esp32")]
+        let mut i2c = i2c.with_sda(peripherals.GPIO25).with_scl(peripherals.GPIO21);
+
+        #[cfg(feature = "esp32s3")]
+        let mut i2c = i2c.with_sda(peripherals.GPIO38).with_scl(peripherals.GPIO39);
+
         let expander = probe_expander(&mut i2c);
         if expander == 0 {
-            log_line(&mut tx, "ERROR: expander not found on I2C\n");
+            println!("ERROR: expander not found on I2C");
             loop {}
         }
 
@@ -128,30 +119,44 @@ impl Board {
         #[cfg(feature = "dice")]
         let output1 = DISPLAY_RESET_BIT;
 
-        let mut spi = Spi::new(
+        let spi = Spi::new(
             peripherals.SPI2,
             SpiConfig::default()
                 .with_frequency(Rate::from_mhz(20))
                 .with_mode(Mode::_0),
         )
-        .expect("configure SPI")
-        .with_sck(peripherals.GPIO5)
-        .with_mosi(peripherals.GPIO6);
+        .expect("configure SPI");
 
+        #[cfg(feature = "esp32")]
+        let mut spi = spi.with_sck(peripherals.GPIO22).with_mosi(peripherals.GPIO19);
+
+        #[cfg(feature = "esp32s3")]
+        let mut spi = spi.with_sck(peripherals.GPIO5).with_mosi(peripherals.GPIO6);
+
+
+        #[cfg(feature = "esp32")]
+        let mut dc = Output::new(peripherals.GPIO23, Level::Low, OutputConfig::default());
+
+        #[cfg(feature = "esp32s3")]
         let mut dc = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+
+
+        #[cfg(feature = "esp32")]
+        let mut cs = Output::new(peripherals.GPIO33, Level::High, OutputConfig::default());
+
+        #[cfg(feature = "esp32s3")]
         let mut cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
+
         init_display(&mut spi, &mut dc, &mut cs, &mut delay);
 
         let framebuffer: &'static mut [u16] = unsafe { &mut *(&raw mut FRAMEBUFFER) };
         let canvas = Canvas::new(framebuffer);
 
-        log_line(&mut tx, "badge: display initialised\n");
+        println!("badge: display initialised");
         Self {
             canvas,
             input: Input::new(),
             now_ms: 0,
-            #[cfg(feature = "dice")]
-            tx,
             delay,
             i2c,
             expander,

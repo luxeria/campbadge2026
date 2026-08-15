@@ -20,11 +20,12 @@ install-flash:
 	@command -v espflash >/dev/null 2>&1 || cargo install espflash
 
 GAME ?= dice
+MODEL ?= esp32s3
 
 build:
 	source "$$HOME/export-esp.sh" && \
 	cd firmware && \
-	cargo +esp build --release $(if $(filter dice,$(GAME)),,--no-default-features --features $(GAME))
+	cargo +esp build --release --no-default-features --features $(MODEL),$(GAME) --target xtensa-$(MODEL)-none-elf
 
 format:
 	cargo fmt --all --check
@@ -41,7 +42,7 @@ test: format clippy
 
 # espflash auto-detects the board; append `--port <device>` only if more than one serial device
 flash: build
-	espflash flash --monitor target/xtensa-esp32s3-none-elf/release/firmware
+	espflash flash --monitor target/xtensa-$(MODEL)-none-elf/release/firmware
 
 clean:
 	cargo clean

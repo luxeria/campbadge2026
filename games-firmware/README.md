@@ -14,11 +14,11 @@ Rust firmware and game logic for the LuxCamp badge (M5Stack Atom S3 Lite).
 
 The `firmware` crate compiles exactly one game per build, chosen by a feature:
 
-| feature | game       | module      |
-|---------|------------|-------------|
+| feature | game       | module        |
+|---------|------------|---------------|
 | `dice`  | Farkle     | `apps::dice`  |
-| `snake` | Snake      | `apps::snake`  |
-| `seven` | Sevens     | `apps::seven`  |
+| `snake` | Snake      | `apps::snake` |
+| `seven` | Sevens     | `apps::seven` |
 | `demo`  | demo scene | `apps::demo`  |
 
 `dice` is the default. Each module lives under `firmware/src/apps/` behind its
@@ -37,14 +37,17 @@ The `games` crate contains:
 ## Build / flash
 
 Use the `Makefile` from this directory. The `GAME` variable selects the game
-(one of `dice`, `snake`, `seven`, `demo`); `dice` is the default.
+(one of `dice`, `snake`, `seven`, `demo`); `dice` is the default. The `MODEL`
+variable select the target ESP model (`esp32s3` or `esp32`); `esp32s3` is the
+default.
 
 ```sh
-make build              # default: dice
+make build              # default: dice for esp32s3
 make flash              # build + flash dice
 
-export GAME=snake       # switch game
-make flash              # build + flash snake
+make flash GAME=snake   # build + flash snake
+
+make flash MODEL=esp32  # build + flash esp32 version
 ```
 
 `make install-toolchain` sets up the Xtensa toolchain once. `espflash`

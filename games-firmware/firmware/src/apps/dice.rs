@@ -5,6 +5,8 @@
 //! splits the formerly-monolithic loop into discrete steps: input handling per
 //! phase, rendering, and scheduled result sounds.
 
+use esp_println::println;
+
 use raylib_camp::canvas::Canvas;
 use raylib_camp::color::Color;
 use raylib_camp::input::Button;
@@ -143,7 +145,7 @@ impl DiceGame {
             self.reset_press_count = 0;
             self.reset_game();
             buzzer::play_startup(&board.ledc, &mut board.delay);
-            crate::board::log_line(&mut board.tx, "badge: game reset by BTN7 triple-press\n");
+            println!("badge: game reset by BTN7 triple-press");
         }
     }
 
@@ -532,7 +534,7 @@ pub fn main(mut board: Board) -> ! {
         if board.input.any_just_pressed() {
             for index in 0..8 {
                 if board.input.just_pressed(button_at(index)) {
-                    log_button_press(&mut board.tx, index);
+                    log_button_press(index);
                 }
             }
         }
@@ -577,7 +579,6 @@ fn button_at(index: usize) -> Button {
 
 /// Logs a freshly pressed button by name and hex mask, e.g. `btn1 0x01`.
 fn log_button_press(
-    tx: &mut esp_hal::usb_serial_jtag::UsbSerialJtagTx<'_, esp_hal::Blocking>,
     index: usize,
 ) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -587,7 +588,7 @@ fn log_button_press(
     buffer[7] = HEX[(bit >> 4) as usize];
     buffer[8] = HEX[(bit & 0x0f) as usize];
     if let Ok(text) = core::str::from_utf8(&buffer[..10]) {
-        crate::board::log_line(tx, text);
+        println!("{}", text);
     }
 }
 
